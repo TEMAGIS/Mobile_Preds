@@ -2200,7 +2200,7 @@ async function startApp() {
     if (refreshTimer) clearInterval(refreshTimer);
     refreshTimer = setInterval(fetchAssets, CONFIG.refreshInterval);
   }
-}
+} 
 document.addEventListener('DOMContentLoaded', async () => {
   // Step 1 — if we just got back from the OAuth redirect, exchange the code
   const consumed = await handleOAuthCallback();
