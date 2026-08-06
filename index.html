@@ -1,4 +1,4 @@
-<!DOCTYPE html> 
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -110,16 +110,39 @@
   .header-pill.icon-only { padding: 6px; aspect-ratio: 1; justify-content: center; }
   .search-wrap { position: relative; margin-bottom: 8px; }
   .search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--text3); pointer-events: none; }
-  .mission-wrap { position: relative; margin-bottom: 8px; }
-  .mission-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--text3); pointer-events: none; }
-  #mission-select {
-    width: 100%; padding: 10px 30px 10px 34px; border: 2px solid var(--border); border-radius: var(--radius-sm);
-    font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 600; color: var(--text);
-    background: var(--surface) no-repeat right 12px center/12px 12px url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%234f5665' stroke-width='2.5'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
-    outline: none; appearance: none; -webkit-appearance: none; -moz-appearance: none;
-    transition: border-color 0.2s, box-shadow 0.2s; cursor: pointer;
+  /* ── Mission picker (full-screen, shown before the map/list) ───── */
+  #mission-screen {
+    position: fixed; inset: 0; z-index: 4500;
+    background: linear-gradient(165deg, var(--tema-blue) 0%, #00193f 100%);
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px; padding-top: max(24px, env(safe-area-inset-top));
+    padding-bottom: max(24px, env(safe-area-inset-bottom));
   }
-  #mission-select:focus { border-color: var(--focus); box-shadow: 0 0 0 3px rgba(255,191,71,0.35); }
+  #mission-screen[hidden] { display: none; }
+  .mission-screen-card {
+    width: 100%; max-width: 440px; max-height: 88vh;
+    background: var(--surface); border-radius: 18px;
+    padding: 22px 20px 20px; box-shadow: var(--shadow-lg);
+    display: flex; flex-direction: column;
+  }
+  .mission-screen-header { margin-bottom: 14px; flex-shrink: 0; }
+  .mission-screen-header h2 { font-size: 18px; font-weight: 700; color: var(--text); letter-spacing: -0.3px; margin-bottom: 4px; }
+  .mission-screen-sub { font-size: 13px; color: var(--text2); line-height: 1.4; }
+  .mission-screen-list { overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 2px; }
+  .mission-screen-loading { text-align: center; padding: 28px 12px; color: var(--text3); font-size: 13px; }
+  .mission-option {
+    width: 100%; text-align: left; background: var(--surface2); border: 2px solid var(--border);
+    border-radius: var(--radius-sm); padding: 12px 14px; cursor: pointer; font-family: 'DM Sans', sans-serif;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .mission-option:hover { border-color: var(--tema-blue); background: var(--surface); }
+  .mission-option.selected { border-color: var(--tema-blue); background: #e8eef9; }
+  .mission-option-badge {
+    display: inline-block; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
+    color: var(--tema-blue); background: #dce6fb; padding: 2px 7px; border-radius: 8px; margin-bottom: 5px;
+  }
+  .mission-option-name { font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 2px; }
+  .mission-option-line { font-size: 12px; color: var(--text2); line-height: 1.5; }
   #search-input {
     width: 100%; padding: 10px 10px 10px 34px; border: 2px solid var(--border); border-radius: var(--radius-sm);
     font-family: 'DM Sans', sans-serif; font-size: 16px;
@@ -297,7 +320,10 @@
   .sdiv { height: 1px; background: var(--border); margin: 0 20px; }
   .sec { padding: 14px 20px; }
   .sec-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; color: var(--text3); margin-bottom: 8px; }
-  .kv-grid { display: grid; grid-template-columns: max-content 1fr; gap: 6px 12px; font-size: 13px; }
+  /* Fixed (not max-content) so the label/value boundary lines up at the
+     same x position across every section on the sheet, not just within
+     each section individually. */
+  .kv-grid { display: grid; grid-template-columns: 150px 1fr; gap: 6px 12px; font-size: 13px; }
   .kv-key { color: var(--text3); font-weight: 600; }
   .kv-val { color: var(--text); word-break: break-word; }
   .kv-empty { color: var(--text3); font-style: italic; opacity: 0.75; }
@@ -389,7 +415,22 @@
   </div>
 </div>
 <!-- ════════════════════════════════════════════════════════════
-     MAIN APP — hidden until login completes
+     MISSION PICKER
+     Shown right after sign-in, before the map/list ever render, so
+     picking a mission doesn't cost any header/map real estate. Also
+     reachable later via the "Mission" pill in the header to switch.
+     ════════════════════════════════════════════════════════════ -->
+<div id="mission-screen" role="dialog" aria-labelledby="mission-screen-title" hidden>
+  <div class="mission-screen-card">
+    <div class="mission-screen-header">
+      <h2 id="mission-screen-title">Select a Mission</h2>
+      <div class="mission-screen-sub">Choose which mission's damage assessments to view.</div>
+    </div>
+    <div id="mission-screen-list" class="mission-screen-list"></div>
+  </div>
+</div>
+<!-- ════════════════════════════════════════════════════════════
+     MAIN APP — hidden until a mission is picked
      ════════════════════════════════════════════════════════════ -->
 <div id="app" role="application" aria-label="TN Damage Assessments map" hidden>
   <header id="header" role="banner">
@@ -406,6 +447,10 @@
         <h1 class="app-title-text">TN Damage Assessments</h1>
       </div>
       <div class="header-pills">
+        <button class="header-pill" onclick="showMissionScreen()" aria-label="Change mission" id="mission-pill">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M4 22V4"/><path d="M4 4h14l-2 4 2 4H4"/></svg>
+          <span id="mission-pill-label">Mission</span>
+        </button>
         <button class="header-pill" onclick="requestLocation()" aria-label="Use my location">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
           <span id="loc-label">Locate</span>
@@ -416,11 +461,6 @@
       <label for="search-input" class="sr-only">Search assessments</label>
       <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
       <input id="search-input" type="search" placeholder="Search by address, city, county, dwelling type…" oninput="onSearch()" aria-label="Search assessments" autocomplete="off">
-    </div>
-    <div class="mission-wrap">
-      <svg class="mission-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M4 22V4"/><path d="M4 4h14l-2 4 2 4H4"/></svg>
-      <label for="mission-select" class="sr-only">Active mission</label>
-      <select id="mission-select" onchange="onMissionChange(this.value)"></select>
     </div>
     <div id="loading-bar" role="progressbar" aria-label="Loading" style="display:none;height:3px;background:rgba(255,255,255,0.3);border-radius:2px;overflow:hidden;margin-bottom:2px">
       <div style="height:100%;width:40%;background:white;border-radius:2px;animation:loadbar 1.2s ease-in-out infinite"></div>
@@ -870,7 +910,12 @@ function showLogin() {
 }
 function hideLogin() {
   loginScreen().hidden = true;
+  // Note: #app itself stays hidden — it's revealed by revealApp() once the
+  // user picks a mission on the mission-screen, not immediately on login.
+}
+function revealApp() {
   appShell().hidden = false;
+  if (map) map.invalidateSize();
 }
 function setLoginError(msg) {
   const el = document.getElementById('login-error');
@@ -1080,6 +1125,7 @@ async function fetchAssets() {
     if (err.tokenExpired) {
       // Token died — push back to login, but keep last-known data on screen
       clearStoredToken();
+      hideMissionScreen();
       alert('Your session has expired. Please sign in again.');
       showLogin();
       return;
@@ -1094,6 +1140,11 @@ async function fetchAssets() {
       applyMissionsAndRender(true, cached.ts);
       setOfflineBanner(true);
     } else {
+      // Nothing to pick a mission from — skip the picker and show the
+      // error/retry state directly in the normal app shell instead of
+      // leaving the user stuck on a perpetual "Loading missions…" screen.
+      hideMissionScreen();
+      revealApp();
       showError(`Could not load assessments.<br><small>${err.message}</small>`);
     }
   }
@@ -1275,25 +1326,74 @@ function computeMissions() {
     activeMission = missions.length ? missions[0].key : 'all';
   }
 }
-function missionLabel(m) {
-  const num  = m.missionNum || (m.key === '__unknown__' ? 'Unassigned' : m.key);
-  const kind = m.trainMission ? ` · ${m.trainMission}` : '';
-  const when = m.latest !== null ? ` — ${new Date(m.latest).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: '2-digit' })}` : '';
-  return `${num}${kind} (${m.count})${when}`;
+// Splits a mission's info into the 3 display lines used on its picker
+// card: a name line ("Mission #7" / "Unassigned"), a last-entry line,
+// and an assessment-count line.
+function missionDisplay(m) {
+  const name = m.missionNum
+    ? `Mission #${m.missionNum}`
+    : (m.key === '__unknown__' ? 'Unassigned' : `Mission #${m.key}`);
+  const lastEntry = m.latest !== null
+    ? `Last entry: ${new Date(m.latest).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: '2-digit' })}`
+    : 'Last entry: —';
+  const count = `${m.count} assessment${m.count !== 1 ? 's' : ''}`;
+  return { name, lastEntry, count };
 }
-function renderMissionSelect() {
-  const sel = document.getElementById('mission-select');
-  if (!sel) return;
-  const optAll = `<option value="all">All missions (${assets.length})</option>`;
-  const opts = missions.map(m => `<option value="${escapeHtml(m.key)}">${escapeHtml(missionLabel(m))}</option>`).join('');
-  sel.innerHTML = optAll + opts;
-  sel.value = activeMission;
+// Renders the full-screen mission picker's list of options. Shows a
+// loading placeholder if data hasn't arrived yet (first-ever load,
+// before the initial fetchAssets() resolves).
+function renderMissionScreenList() {
+  const list = document.getElementById('mission-screen-list');
+  if (!list) return;
+  if (!missionInitialized) {
+    list.innerHTML = '<div class="mission-screen-loading">Loading missions…</div>';
+    return;
+  }
+  const totalCount = assets.length;
+  const allBtn = `
+    <button class="mission-option ${activeMission === 'all' ? 'selected' : ''}" onclick="selectMissionFromScreen('all')">
+      <div class="mission-option-name">All Missions</div>
+      <div class="mission-option-line">${totalCount} assessment${totalCount !== 1 ? 's' : ''}</div>
+    </button>`;
+  const opts = missions.map((m, i) => {
+    const d = missionDisplay(m);
+    const badge = i === 0 ? '<div class="mission-option-badge">Most recent</div>' : '';
+    return `
+    <button class="mission-option ${activeMission === m.key ? 'selected' : ''}" onclick="selectMissionFromScreen('${escapeHtml(m.key)}')">
+      ${badge}
+      <div class="mission-option-name">${escapeHtml(d.name)}</div>
+      <div class="mission-option-line">${escapeHtml(d.lastEntry)}</div>
+      <div class="mission-option-line">${escapeHtml(d.count)}</div>
+    </button>`;
+  }).join('');
+  list.innerHTML = allBtn + opts;
 }
-function onMissionChange(val) {
-  activeMission = val;
+function showMissionScreen() {
+  renderMissionScreenList();
+  document.getElementById('mission-screen').hidden = false;
+}
+function hideMissionScreen() {
+  document.getElementById('mission-screen').hidden = true;
+}
+// Keeps the compact header pill in sync with whatever's currently scoped.
+function updateMissionPillLabel() {
+  const el = document.getElementById('mission-pill-label');
+  if (!el) return;
+  if (activeMission === 'all') { el.textContent = 'All Missions'; return; }
+  const m = missions.find(mm => mm.key === activeMission);
+  el.textContent = m && m.missionNum ? `#${m.missionNum}` : 'Mission';
+}
+// Called both the first time (right after login, before the map/list have
+// ever been shown) and later when the user reopens the picker via the
+// header pill to switch missions.
+function selectMissionFromScreen(key) {
+  activeMission = key;
+  hideMissionScreen();
+  revealApp();
+  updateMissionPillLabel();
   refreshMarkers();
   renderList();
-  fitToScopedAssets();
+  setTimeout(fitToScopedAssets, 60);
 }
 function scopedAssets() {
   if (activeMission === 'all') return assets;
@@ -1312,7 +1412,8 @@ function fitToScopedAssets() {
 // mission-scoped set.
 function applyMissionsAndRender(isStale, staleTs) {
   computeMissions();
-  renderMissionSelect();
+  renderMissionScreenList();
+  updateMissionPillLabel();
   renderedList = getFiltered();
   document.getElementById('list-count').textContent = `${renderedList.length} assessment${renderedList.length !== 1 ? 's' : ''}`;
   refreshMarkers();
@@ -1884,7 +1985,6 @@ async function openDetail(id) {
       ${bannerIcon}
       <div>
         <div class="banner-label" style="color:${color}">${escapeHtml(label)}</div>
-        <div class="banner-desc" style="color:${color}">Preliminary damage assessment level</div>
       </div>
     </div>
     <div class="sheet-header">
@@ -1991,8 +2091,10 @@ async function startApp() {
   buildFilterGrid();
   bindListHandlers();
   initMap();
-  const missionSel = document.getElementById('mission-select');
-  if (missionSel) missionSel.innerHTML = '<option value="all">Loading missions…</option>';
+  // Show the mission picker immediately (with a loading placeholder) so
+  // it's the first thing the user sees — the map/list stay hidden behind
+  // it until a mission is picked in revealApp()/selectMissionFromScreen().
+  showMissionScreen();
   await fetchAssets();
   // Discover layer capabilities (hasAttachments, etc.) — runs in parallel
   // with everything else; the result is consulted when a detail is opened.
