@@ -288,6 +288,15 @@
   .pop { padding: 11px 13px; min-width: 160px; }
   .pop-name { font-size: 13px; font-weight: 700; margin-bottom: 2px; color: var(--text); }
   .pop-type { font-size: 11px; font-weight: 600; }
+  .pop-attach-loading { font-size: 11px; color: var(--text3); margin-top: 7px; }
+  .pop-attach { display: flex; gap: 6px; margin-top: 8px; }
+  .pop-attach-thumb {
+    width: 44px; height: 44px; border-radius: 6px; overflow: hidden; flex-shrink: 0;
+    background: var(--surface2); border: 1px solid var(--border); cursor: pointer;
+    display: flex; align-items: center; justify-content: center; font-size: 17px;
+  }
+  .pop-attach-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .pop-attach-more { color: var(--text2); font-size: 12px; font-weight: 700; background: var(--surface3, #eef1f5); }
   /* ── Detail Sheet ────────────────────────────────────────── */
   #detail-sheet { position: fixed; inset: 0; z-index: 2000; pointer-events: none; }
   #detail-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.55); opacity: 0; transition: opacity 0.3s; }
@@ -1167,6 +1176,25 @@ async function fetchLayerMeta() {
     console.warn('[Preds PDA] failed to read layer metadata:', err);
   }
 }
+// Shared attachment cache — the map popup and the detail sheet both need
+// attachment info for the same OBJECTID, so fetch once and reuse. Keyed by
+// objectId; each entry is { status: 'loading'|'done', result, promise }.
+// `status` (rather than just presence-in-Map) lets callers tell "still
+// fetching" apart from "fetched, turned out empty/errored" so a popup
+// doesn't get stuck showing "Loading…" forever after a failed fetch.
+const attachmentCache = new Map();
+function getAttachmentInfoCached(objectId) {
+  const existing = attachmentCache.get(objectId);
+  if (existing) return existing.status === 'done' ? Promise.resolve(existing.result) : existing.promise;
+  const entry = { status: 'loading', result: null, promise: null };
+  entry.promise = fetchAttachmentInfo(objectId).then(result => {
+    entry.status = 'done';
+    entry.result = result;
+    return result;
+  });
+  attachmentCache.set(objectId, entry);
+  return entry.promise;
+}
 async function fetchAttachmentInfo(objectId) {
   if (!TOKEN) return { state: 'error', message: 'Not signed in', infos: [] };
   try { await ensureFreshToken(); }
@@ -1756,39 +1784,100 @@ function initMap() {
   });
   map.addLayer(clusterGroup);
 }
+// Popup thumbnails are raw HTML injected by Leaflet (not real DOM nodes we
+// keep a reference to), so we can't attach per-tile listeners when they're
+// built. Delegate from a single document-level listener instead, keyed off
+// the popup's data-oid and each tile's data-idx.
+document.addEventListener('click', (e) => {
+  const thumb = e.target.closest('.pop-attach-thumb');
+  if (!thumb) return;
+  const popEl = thumb.closest('.pop[data-oid]');
+  if (!popEl) return;
+  e.stopPropagation();
+  const objectId = popEl.getAttribute('data-oid');
+  const entry = attachmentCache.get(objectId) || attachmentCache.get(Number(objectId));
+  if (!entry || entry.status !== 'done' || entry.result.state !== 'ok') return;
+  const infos = entry.result.infos;
+  const idx = Number(thumb.getAttribute('data-idx'));
+  if (idx >= infos.length) {
+    // The "+N" tile — jump to the full detail sheet's attachment grid
+    // rather than trying to cram every thumbnail into a tiny popup.
+    const asset = assets.find(as => String(as.objectId) === String(objectId));
+    if (asset) openDetail(asset.id);
+    return;
+  }
+  const att = infos[idx];
+  if (att.isImage) openLightbox(att.url, att.name);
+  else window.open(att.url, '_blank', 'noopener');
+});
+function buildPopupHtml(a) {
+  const lvl = a.level ? DAMAGE_LEVELS[a.level] : null;
+  const color = lvl ? lvl.bg : '#666';
+  const label = lvl ? lvl.label : (a.levelRaw || 'Unclassified');
+  const title = a.suiteApt ? `${a.address} ${a.suiteApt}` : a.address;
+  const popIcon = iconHTML(a.level, 28);
+  return `<div class="pop" data-oid="${a.objectId}">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+        <div style="flex-shrink:0">${popIcon}</div>
+        <div class="pop-name">${escapeHtml(title)}</div>
+      </div>
+      <div class="pop-type" style="color:${color}">${escapeHtml(label)}</div>
+      ${a.dwellingType ? `<div style="font-size:11px;color:var(--text3);margin-top:2px">${escapeHtml(a.dwellingType)}</div>` : ''}
+      ${renderPopupAttachments(a.objectId)}
+    </div>`;
+}
+// Renders the small thumbnail strip shown inside a marker popup. Shows a
+// "Loading…" placeholder until the shared attachment cache has resolved,
+// then up to 4 thumbnails with a "+N" tile if there are more. Errors and
+// "no attachments" both render nothing — the popup is a quick preview, not
+// the place to surface a fetch-error message (the detail sheet does that).
+function renderPopupAttachments(objectId) {
+  const entry = attachmentCache.get(objectId);
+  if (!entry || entry.status !== 'done') return `<div class="pop-attach-loading">Loading photos…</div>`;
+  const result = entry.result;
+  if (result.state === 'error' || !result.infos.length) return '';
+  const MAX = 4;
+  const shown = result.infos.slice(0, MAX);
+  const extra = result.infos.length - shown.length;
+  const tiles = shown.map((att, i) => att.isImage
+    ? `<div class="pop-attach-thumb" data-idx="${i}"><img src="${escapeHtml(att.url)}" alt="${escapeHtml(att.name)}" loading="lazy"></div>`
+    : `<div class="pop-attach-thumb pop-attach-file" data-idx="${i}" title="${escapeHtml(att.name)}">📄</div>`
+  ).join('');
+  const more = extra > 0 ? `<div class="pop-attach-thumb pop-attach-more" data-idx="${MAX}">+${extra}</div>` : '';
+  return `<div class="pop-attach">${tiles}${more}</div>`;
+}
+// Fetches (via the shared cache) and re-renders a popup's attachment strip
+// once data arrives. Bound to each marker's `popupopen` event rather than
+// fetched eagerly for every marker up front — with a large dataset that
+// would mean hundreds of attachment queries before the user asks for any.
+async function loadPopupAttachments(a, marker) {
+  const cached = attachmentCache.get(a.objectId);
+  if (cached && cached.status === 'done') return; // already resolved, popup HTML already reflects it
+  await getAttachmentInfoCached(a.objectId);
+  if (!marker.isPopupOpen()) return; // user moved on — don't fight the current popup
+  marker.setPopupContent(buildPopupHtml(a));
+}
 function refreshMarkers() {
   if (!clusterGroup) return;
   clusterGroup.clearLayers();
   markers = {};
   const layers = [];
   scopedAssets().forEach(a => {
-    const lvl = a.level ? DAMAGE_LEVELS[a.level] : null;
-    const color = lvl ? lvl.bg : '#666';
-    const label = lvl ? lvl.label : (a.levelRaw || 'Unclassified');
-    const title = a.suiteApt ? `${a.address} ${a.suiteApt}` : a.address;
-    const popIcon = iconHTML(a.level, 28);
     const mk = L.marker([a.lat, a.lng], { icon: makeIcon(a) })
-      .bindPopup(
-        `<div class="pop">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-            <div style="flex-shrink:0">${popIcon}</div>
-            <div class="pop-name">${escapeHtml(title)}</div>
-          </div>
-          <div class="pop-type" style="color:${color}">${escapeHtml(label)}</div>
-          ${a.dwellingType ? `<div style="font-size:11px;color:var(--text3);margin-top:2px">${escapeHtml(a.dwellingType)}</div>` : ''}
-        </div>`,
-        {
-          closeButton: false,
-          offset: [0, -4],
-          // Auto-pan the map so popups never end up behind the on-map UI:
-          // the basemap toggle pill (top-left) or the locate FAB
-          // (bottom-right). Padding values are roughly the size of those
-          // controls plus a comfortable margin.
-          autoPan:                   true,
-          autoPanPaddingTopLeft:     [130, 60],
-          autoPanPaddingBottomRight: [70, 70],
-        })
-      .on('click', () => selectAsset(a.id));
+      .bindPopup(buildPopupHtml(a), {
+        closeButton: false,
+        offset: [0, -4],
+        maxWidth: 260,
+        // Auto-pan the map so popups never end up behind the on-map UI:
+        // the basemap toggle pill (top-left) or the locate FAB
+        // (bottom-right). Padding values are roughly the size of those
+        // controls plus a comfortable margin.
+        autoPan:                   true,
+        autoPanPaddingTopLeft:     [130, 60],
+        autoPanPaddingBottomRight: [70, 70],
+      })
+      .on('click', () => selectAsset(a.id))
+      .on('popupopen', () => loadPopupAttachments(a, mk));
     markers[String(a.id)] = mk;
     layers.push(mk);
   });
@@ -2031,7 +2120,14 @@ async function loadAttachmentsInto(a) {
   if (!box) return;
   if (sec) sec.style.display = '';
   console.info(`[Preds PDA] loading attachments for OBJECTID=${a.objectId} (${a.address})`);
-  const result = await fetchAttachmentInfo(a.objectId);
+  // The detail sheet is the "give me the real answer" view — unlike the
+  // popup preview, retry a previously-failed fetch (e.g. token expired,
+  // now refreshed) instead of showing a stale cached error forever.
+  const cachedEntry = attachmentCache.get(a.objectId);
+  if (cachedEntry && cachedEntry.status === 'done' && cachedEntry.result.state === 'error') {
+    attachmentCache.delete(a.objectId);
+  }
+  const result = await getAttachmentInfoCached(a.objectId);
   if (result.state === 'error') {
     box.innerHTML = `<div style="color:#842029;font-size:13px;line-height:1.5">${escapeHtml(result.message)}<br><span style="color:var(--text3);font-size:11px">Open browser DevTools console for details.</span></div>`;
     return;
