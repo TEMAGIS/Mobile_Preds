@@ -495,16 +495,16 @@
 //  token to get a new one. The refresh token itself lasts up to
 //  14 days; once that expires the user has to sign in again.
 //
-//  TODO (Tema): this app isn't hosted yet. Once it's pushed to its
-//  GitHub Pages repo, register an AGOL app (or reuse an existing
-//  Native Application item) with that Pages URL as an allowed
-//  redirect URI, then replace clientId + redirectUri below.
+//  clientId below is the "Preds Mobile" Native Application item's Client
+//  ID from ArcGIS Online. redirectUri still needs to be set to wherever
+//  this file is actually hosted (GitHub Pages URL), and that same URL
+//  must be added to the app item's Redirect URIs list in AGOL.
 // ════════════════════════════════════════════════════════════════
 const CONFIG = {
   serviceUrl:   'https://services1.arcgis.com/kILp9lqGUeOhnDbI/ArcGIS/rest/services/Preliminary_Damage_Survey_Dashboard_View/FeatureServer/0',
-  // OAuth 2.0 — REPLACE these two once the GitHub Pages URL is known.
-  clientId:     'REPLACE_WITH_CLIENT_ID',
-  redirectUri:  'REPLACE_WITH_GITHUB_PAGES_URL/',
+  // OAuth 2.0
+  clientId:     'TrgLp9Lgd2D4hi7T',
+  redirectUri:  'https://temagis.github.io/Mobile_Preds/',
   authorizeUrl: 'https://www.arcgis.com/sharing/rest/oauth2/authorize',
   tokenUrl:     'https://www.arcgis.com/sharing/rest/oauth2/token',
   signOutUrl:   'https://www.arcgis.com/sharing/rest/oauth2/signout',
