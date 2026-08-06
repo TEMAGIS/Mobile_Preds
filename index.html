@@ -318,9 +318,9 @@
     display: flex; align-items: center; justify-content: center;
     cursor: pointer; font-size: 18px; line-height: 1; color: var(--text2);
   }
-  .sheet-banner { margin: 14px 20px 0; border-radius: var(--radius-sm); padding: 12px 14px; display: flex; align-items: flex-start; gap: 10px; color: white; }
+  .sheet-banner { margin: 14px 20px 0; border-radius: var(--radius-sm); padding: 12px 14px; display: flex; align-items: center; gap: 10px; color: white; }
   .sheet-banner svg { width: 24px; height: 24px; flex-shrink: 0; }
-  .banner-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+  .banner-label { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text); }
   .banner-desc { font-size: 12px; margin-top: 2px; opacity: 0.95; line-height: 1.4; }
   .sheet-header { padding: 14px 20px 10px; }
   .sheet-name { font-size: 19px; font-weight: 700; letter-spacing: -0.4px; margin-bottom: 3px; }
@@ -1246,6 +1246,9 @@ async function fetchAttachmentInfo(objectId) {
     },
   ];
   let lastErr = null;
+  const debugLog = [];   // surfaced in the UI when infos end up empty, so a
+                          // field user without DevTools can still tell us
+                          // exactly what each endpoint returned.
   for (const attempt of attempts) {
     console.info(`trying ${attempt.name}:`, attempt.url);
     try {
@@ -1254,10 +1257,21 @@ async function fetchAttachmentInfo(objectId) {
       console.info(`${attempt.name} response:`, data);
       if (data.error) {
         lastErr = new Error(`${attempt.name}: ${data.error.code} ${data.error.message}`);
+        debugLog.push(`${attempt.name}: error ${data.error.code} ${data.error.message}`);
         continue;
       }
       const raw = attempt.parse(data) || [];
       console.info(`${attempt.name} parsed ${raw.length} attachment(s)`);
+      debugLog.push(`${attempt.name}: ${raw.length} attachment(s)`);
+      if (raw.length === 0) {
+        // This endpoint responded with no error but found nothing — don't
+        // stop here. queryAttachments can come back empty on some hosted
+        // *views* (its attachmentGroups→parentObjectId matching doesn't
+        // always line up), while the per-feature endpoint on the same
+        // OBJECTID still works. Keep trying the remaining attempts before
+        // concluding there really are no attachments.
+        continue;
+      }
       const infos = raw.map(a => {
         let attUrl = a.url || `${CONFIG.serviceUrl}/${objectId}/attachments/${a.id}`;
         if (!/[?&]token=/.test(attUrl)) {
@@ -1273,17 +1287,25 @@ async function fetchAttachmentInfo(objectId) {
         };
       });
       console.groupEnd();
-      return { state: 'ok', infos };
+      return { state: 'ok', infos, debugLog };
     } catch (err) {
       console.warn(`${attempt.name} threw:`, err);
       lastErr = err;
+      debugLog.push(`${attempt.name}: threw ${err.message || err}`);
     }
   }
   console.groupEnd();
+  if (!lastErr) {
+    // Every attempt responded cleanly but every one came back empty — most
+    // likely genuinely no attachments, but keep the debug log around in
+    // case that's wrong for this record too.
+    return { state: 'ok', infos: [], debugLog };
+  }
   return {
     state:   'error',
-    message: lastErr ? lastErr.message : 'Could not load attachments (both endpoints failed).',
+    message: lastErr.message,
     infos:   [],
+    debugLog,
   };
 }
 // ── Cache (offline support) ─────────────────────────────────────
@@ -1618,7 +1640,6 @@ function renderCard(a) {
   const cityLine = [[a.city, a.state].filter(Boolean).join(', ') + (a.zip ? ` ${a.zip}` : ''), a.county ? `${a.county} County` : ''].filter(Boolean).join(' · ');
   const badges = [
     dist,
-    a.region ? `<span class="meta-badge region">${escapeHtml(a.region)}</span>` : '',
     a.dwellingType ? `<span class="meta-badge sector">${escapeHtml(a.dwellingType)}</span>` : '',
   ].filter(Boolean).join('');
   const sidAttr = String(a.id).replace(/"/g, '&quot;');
@@ -2086,9 +2107,7 @@ async function openDetail(id) {
   document.getElementById('detail-body').innerHTML = `
     <div class="sheet-banner" style="background:${color}18;border:1px solid ${color}40;color:${color};">
       ${bannerIcon}
-      <div>
-        <div class="banner-label" style="color:${color}">${escapeHtml(label)}</div>
-      </div>
+      <div class="banner-label">${escapeHtml(label)}</div>
     </div>
     <div class="sheet-header">
       <h2 class="sheet-name" id="detail-asset-name">${escapeHtml(a.address || 'Unknown address')}${a.suiteApt ? ' ' + escapeHtml(a.suiteApt) : ''}</h2>
@@ -2148,7 +2167,17 @@ async function loadAttachmentsInto(a) {
   }
   const infos = result.infos;
   if (!infos.length) {
-    box.innerHTML = '<div style="color:var(--text3);font-size:13px">No attachments for this assessment.</div>';
+    // A small expandable diagnostic line — shows exactly what each lookup
+    // attempt returned for this OBJECTID, so if this is wrong (e.g. the
+    // record really does have attachments) it can be checked/reported
+    // without needing DevTools, even from a phone.
+    const debugLines = (result.debugLog || []).map(l => escapeHtml(l)).join('<br>');
+    box.innerHTML = `
+      <div style="color:var(--text3);font-size:13px">No attachments for this assessment.</div>
+      <details style="margin-top:8px;font-size:11px;color:var(--text3)">
+        <summary style="cursor:pointer">Not expecting this? Tap for details</summary>
+        <div style="margin-top:4px;line-height:1.5">OBJECTID: ${escapeHtml(String(a.objectId))}<br>${debugLines || 'No diagnostic info available.'}</div>
+      </details>`;
     return;
   }
   box.innerHTML = `<div class="attachment-grid">${infos.map((att, i) => `
