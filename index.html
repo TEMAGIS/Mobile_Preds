@@ -601,7 +601,18 @@ const FIELDS = {
   floodZone:          'flood_zone',
   floodZoneSubtype:   'Flood_Zone_Subtype',
   dfirmId:            'DFIRM_ID',
+  softDelete:         'sofe_delete',
 };
+// Records flagged Yes here are soft-deleted in the source data and should
+// never surface anywhere in the app (list, map markers, popups, or mission
+// counts) — treated the same as if they didn't exist. Matches loosely
+// (case-insensitive "yes"/"y"/true/1) since the exact stored value/type
+// wasn't confirmed against the live schema.
+function isSoftDeleted(raw) {
+  if (raw === null || raw === undefined) return false;
+  const v = String(raw).trim().toLowerCase();
+  return v === 'yes' || v === 'y' || v === 'true' || v === '1';
+}
 // ════════════════════════════════════════════════════════════════
 //  DAMAGE LEVELS — the 5 FEMA-style Preliminary Damage Assessment
 //  categories used by this program. Colors/labels match the existing
@@ -1033,6 +1044,7 @@ function featureToAsset(feature) {
     floodZone:          p[FIELDS.floodZone]           || '',
     floodZoneSubtype:   p[FIELDS.floodZoneSubtype]    || '',
     dfirmId:            p[FIELDS.dfirmId]             || '',
+    softDelete:         p[FIELDS.softDelete]          ?? null,
     lat, lng,
     distance:           null,
   };
@@ -1118,7 +1130,8 @@ async function fetchAssets() {
       console.info('[Preds PDA] first feature attribute keys:', Object.keys(allFeatures[0].attributes || {}));
     }
     const raw = allFeatures.map(featureToAsset)
-                  .filter(a => Number.isFinite(a.lat) && Number.isFinite(a.lng));
+                  .filter(a => Number.isFinite(a.lat) && Number.isFinite(a.lng))
+                  .filter(a => !isSoftDeleted(a.softDelete));
     assets = raw.map((a, idx) => ({
       ...a,
       id: `a${idx}`,
@@ -1142,10 +1155,12 @@ async function fetchAssets() {
     // Network error — fall back to cached data if any
     const cached = loadCachedData();
     if (cached && cached.assets && cached.assets.length) {
-      assets = cached.assets.map(a => ({
-        ...a,
-        distance: (userLat !== null) ? haversine(userLat, userLng, a.lat, a.lng) : a.distance,
-      }));
+      assets = cached.assets
+        .filter(a => !isSoftDeleted(a.softDelete))
+        .map(a => ({
+          ...a,
+          distance: (userLat !== null) ? haversine(userLat, userLng, a.lat, a.lng) : a.distance,
+        }));
       applyMissionsAndRender(true, cached.ts);
       setOfflineBanner(true);
     } else {
@@ -2199,7 +2214,7 @@ async function startApp() {
     if (refreshTimer) clearInterval(refreshTimer);
     refreshTimer = setInterval(fetchAssets, CONFIG.refreshInterval);
   }
-} 
+}
 document.addEventListener('DOMContentLoaded', async () => {
   // Step 1 — if we just got back from the OAuth redirect, exchange the code
   const consumed = await handleOAuthCallback();
