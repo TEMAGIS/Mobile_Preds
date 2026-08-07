@@ -1010,13 +1010,25 @@ async function handleOAuthCallback() {
 // ════════════════════════════════════════════════════════════════
 //  DATA FETCHING
 // ════════════════════════════════════════════════════════════════
+// The OBJECTID is critical for attachment lookups but its exact key casing
+// can differ from what we requested (some hosted views — especially joined
+// ones — echo it back under a slightly different name/case than the plain
+// "OBJECTID" we asked for). Fall back to a case-insensitive scan rather
+// than silently carrying an undefined id through to a broken /undefined/
+// attachments request later.
+function resolveObjectId(p) {
+  const direct = p[FIELDS.objectId];
+  if (direct !== undefined && direct !== null) return direct;
+  const key = Object.keys(p).find(k => /^objectid$/i.test(k));
+  return key ? p[key] : undefined;
+}
 function featureToAsset(feature) {
   const p   = feature.attributes;
   const lat = feature.geometry ? feature.geometry.y : null;
   const lng = feature.geometry ? feature.geometry.x : null;
   const levelKey = normaliseLevel(p[FIELDS.level]);
   return {
-    objectId:           p[FIELDS.objectId],
+    objectId:           resolveObjectId(p),
     address:            p[FIELDS.address]            || 'Unknown address',
     suiteApt:           p[FIELDS.suiteApt]            || '',
     city:               p[FIELDS.city]                || '',
@@ -1212,6 +1224,18 @@ function getAttachmentInfoCached(objectId) {
 }
 async function fetchAttachmentInfo(objectId) {
   if (!TOKEN) return { state: 'error', message: 'Not signed in', infos: [] };
+  if (objectId === undefined || objectId === null) {
+    // Don't even try — a missing OBJECTID means the source query never
+    // resolved one for this record (see resolveObjectId()), so any request
+    // built from it would just hit /undefined/attachments and come back
+    // with a confusing generic 400. Fail clearly instead.
+    return {
+      state:    'error',
+      message:  'This record has no OBJECTID on file, so attachments can\'t be looked up. Try refreshing the data.',
+      infos:    [],
+      debugLog: ['objectId was undefined/null — the query never returned a usable OBJECTID for this record.'],
+    };
+  }
   try { await ensureFreshToken(); }
   catch (err) { return { state: 'error', message: 'Session expired — sign in again', infos: [] }; }
   // Diagnostic: log everything about the attempt so we can see exactly
