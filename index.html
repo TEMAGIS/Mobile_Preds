@@ -260,7 +260,7 @@
   .card-titles { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; }
   .card-title-divider { width: 1px; align-self: stretch; background: var(--border); flex-shrink: 0; }
   .card-name { font-size: 14px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: -0.2px; flex: 1; min-width: 0; }
-  .card-cityzip { font-size: 12px; color: var(--text3); text-align: right; margin-bottom: 0; }
+  .card-cityzip { font-size: 12px; color: var(--text2); margin-bottom: 0; }
   .card-type-label { font-size: 14px; font-weight: 700; letter-spacing: -0.2px; flex-shrink: 0; white-space: nowrap; }
   .card-asset-type { font-size: 11px; color: var(--text3); margin-top: 1px; font-style: italic; }
   .card-address { font-size: 12px; color: var(--text2); line-height: 1.4; margin-bottom: 0; }
@@ -1890,9 +1890,9 @@ function buildPopupHtml(a) {
   return `<div class="pop" data-oid="${a.objectId}">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
         <div style="flex-shrink:0">${popIcon}</div>
-        <div class="pop-name">${escapeHtml(title)}</div>
+        <div class="pop-type" style="color:${color}">${escapeHtml(label)}</div>
       </div>
-      <div class="pop-type" style="color:${color}">${escapeHtml(label)}</div>
+      <div class="pop-name">${escapeHtml(title)}</div>
       ${a.dwellingType ? `<div style="font-size:11px;color:var(--text3);margin-top:2px">${escapeHtml(a.dwellingType)}</div>` : ''}
       ${renderPopupAttachments(a.objectId)}
     </div>`;
