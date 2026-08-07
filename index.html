@@ -497,9 +497,9 @@
   </div>
   <div id="map-container" role="region" aria-label="Map showing damage assessment locations">
     <div id="map"></div>
-    <button id="basemap-toggle" type="button" onclick="toggleBasemap()" aria-label="Switch to Hybrid basemap" title="Switch basemap">
+    <button id="basemap-toggle" type="button" onclick="toggleBasemap()" aria-label="Switch to Streets basemap">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><polygon points="12 2 22 8.5 12 15 2 8.5 12 2"/><polyline points="2 15.5 12 22 22 15.5"/></svg>
-      <span class="basemap-label">Hybrid</span>
+      <span class="basemap-label">Streets</span>
     </button>
     <button id="fab-locate" onclick="recenterOnUser()" title="Re-center on my location" aria-label="Re-center on my location">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
@@ -1818,7 +1818,7 @@ const BASEMAPS = {
     ],
   },
 };
-let currentBasemap = 'streets';
+let currentBasemap = 'hybrid'; // aerial imagery is the field team's preferred default
 let basemapLayers  = [];   // tracks every tile layer the current basemap added
 function applyBasemap(key) {
   if (!BASEMAPS[key]) return;
@@ -1857,20 +1857,25 @@ function toggleBasemap() {
 //  service-worker cache (sw.js) so there's one code path, not two.
 //
 //  Tier 1 — "cache what's been seen": sw.js transparently caches every
-//  Streets-basemap tile the app actually loads while online, and serves
-//  it back if that exact tile is requested again while offline. That's
-//  automatic just from panning/zooming; nothing below is needed for it.
+//  Hybrid-basemap (aerial imagery + reference overlays) tile the app
+//  actually loads while online, and serves it back if that exact tile is
+//  requested again while offline. That's automatic just from panning/
+//  zooming; nothing below is needed for it.
 //
 //  Tier 2 — proactive low-res fallback: as soon as a mission is picked,
 //  warmCountyFallbackCache() below figures out which TN counties that
 //  mission's records fall in, works out which z14 tiles cover each
 //  county's real boundary (not just a box around the points), and issues
-//  plain fetch() calls for them. Those fetches get intercepted by sw.js's
-//  normal fetch handler and land in the exact same cache as tier 1 — this
-//  function doesn't touch the Cache API directly at all.
+//  plain fetch() calls for them — one per Hybrid layer per tile, since all
+//  3 stacked layers are needed for the county to render correctly offline.
+//  Those fetches get intercepted by sw.js's normal fetch handler and land
+//  in the exact same cache as tier 1 — this function doesn't touch the
+//  Cache API directly at all.
 //
-//  Imagery/Hybrid basemap tiles are never touched by any of this, per the
-//  "streets only" decision.
+//  Hybrid (aerial) is now both the default basemap and the one that gets
+//  cached, per the field team's preference for aerial imagery — Streets
+//  (CARTO) tiles are no longer cached at all. See app-notes.md "Map tile
+//  caching" for the switch-over history.
 
 // Simplified TN county boundaries (from US Census county geometry,
 // filtered to state FIPS 47, coordinates rounded + polygons simplified
@@ -1956,6 +1961,10 @@ function tilesForCounty(geom, z) {
 const TILE_WARM_ZOOM = 14;
 const TILE_WARM_CONCURRENCY = 6;
 let tileWarmInFlight = false;
+// Fills in an Esri tile URL template's {z}/{y}/{x} placeholders for one tile.
+function fillArcgisTileUrl(template, t) {
+  return template.replace('{z}', t.z).replace('{y}', t.y).replace('{x}', t.x);
+}
 // Fire-and-forget prefetch of the z14 fallback tiles for every county
 // represented in the given assets (normally scopedAssets() for whichever
 // mission was just selected). Silently does nothing if service workers
@@ -1975,13 +1984,16 @@ async function warmCountyFallbackCache(missionAssets) {
     });
     const tiles = Array.from(tileSet.values());
     if (!tiles.length) return;
-    const subs = ['a', 'b', 'c', 'd'];
+    // Hybrid is 3 stacked Esri layers (imagery + boundary labels + road
+    // labels) — all 3 have to be cached per tile for the area to render
+    // correctly offline, so expand each map tile into 3 fetch targets.
+    const layerUrls = BASEMAPS.hybrid.layers.map(l => l.url);
+    const urls = [];
+    tiles.forEach(t => layerUrls.forEach(tpl => urls.push(fillArcgisTileUrl(tpl, t))));
     let i = 0;
     async function worker() {
-      while (i < tiles.length) {
-        const t = tiles[i++];
-        const s = subs[(t.x + t.y) % subs.length];
-        const url = `https://${s}.basemaps.cartocdn.com/light_all/${t.z}/${t.x}/${t.y}.png`;
+      while (i < urls.length) {
+        const url = urls[i++];
         try { await fetch(url, { mode: 'no-cors' }); } catch (e) { /* offline mid-warm, or a blocked tile — skip it */ }
       }
     }

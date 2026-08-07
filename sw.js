@@ -1,9 +1,17 @@
-
 // Preds Mobile — offline map-tile cache service worker
 // ════════════════════════════════════════════════════════════════
-// Caches ONLY the "Streets" basemap tiles (CARTO light_all) so the app can
-// still show a map with no connection — never the Hybrid/imagery basemap,
-// per the scoped design (see app-notes.md "Map tile caching").
+// Caches the Hybrid (aerial imagery + boundary/road reference overlays)
+// basemap tiles — this is now the app's default basemap, per the field
+// team's preference for aerial imagery. Streets (CARTO) tiles are no
+// longer cached; if someone toggles back to Streets while offline, those
+// tiles won't be available (same as it worked before any caching existed).
+// See app-notes.md "Map tile caching" for the full history of this design.
+//
+// The Hybrid basemap is actually 3 stacked Esri tile layers (imagery +
+// place/boundary labels + road labels) — ALL THREE have to be cached for
+// a cached area to render correctly offline, not just the base imagery.
+// Keep ARCGIS_TILE_PATH_PREFIXES below in sync with BASEMAPS.hybrid.layers
+// in index.html if that ever changes.
 //
 // Two things feed this cache through the exact same code path below:
 //   1. Ordinary panning/zooming while online — the fetch handler here just
@@ -19,23 +27,33 @@
 // can read a real Content-Length we use it for the storage budget; when we
 // can't (opaque response), we fall back to AVG_TILE_BYTES as an estimate so
 // eviction still has *some* budget to work against. That makes the ~200MB
-// target approximate rather than exact in the opaque case.
+// target approximate rather than exact in the opaque case. Imagery tiles are
+// meaningfully heavier than the old Streets vector tiles, and every map
+// square now costs 3 tile fetches instead of 1, so the same ~200MB budget
+// now covers noticeably less ground than it did under Streets-only caching.
 //
 // Eviction: once total (estimated) bytes exceed MAX_CACHE_BYTES, the
 // least-recently-cached tiles are deleted first until back under
 // EVICT_TO_BYTES, tracked via a small IndexedDB store keyed by tile URL.
 
-const TILE_CACHE = 'pda-tiles-v1';
-const META_DB = 'pda-tile-meta';
+const TILE_CACHE = 'pda-tiles-v2'; // bumped from v1 (Streets) since the cached basemap changed
+const META_DB = 'pda-tile-meta-v2';
 const META_STORE = 'meta';
 const MAX_CACHE_BYTES = 200 * 1024 * 1024; // ~200MB (middle of the agreed 150-250MB range)
 const EVICT_TO_BYTES = Math.floor(MAX_CACHE_BYTES * 0.85);
-const AVG_TILE_BYTES = 15 * 1024; // estimate used only when a response is opaque
+const AVG_TILE_BYTES = 20 * 1024; // estimate used only when a response is opaque (imagery-weighted)
 
-function isStreetTile(url) {
+const ARCGIS_HOST = 'server.arcgisonline.com';
+const ARCGIS_TILE_PATH_PREFIXES = [
+  '/ArcGIS/rest/services/World_Imagery/MapServer/tile/',
+  '/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/',
+  '/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/',
+];
+
+function isCacheableTile(url) {
   try {
     const u = new URL(url);
-    return u.hostname.endsWith('.basemaps.cartocdn.com') && u.pathname.startsWith('/light_all/');
+    return u.hostname === ARCGIS_HOST && ARCGIS_TILE_PATH_PREFIXES.some(p => u.pathname.startsWith(p));
   } catch (e) {
     return false;
   }
@@ -45,12 +63,20 @@ self.addEventListener('install', () => {
   self.skipWaiting();
 });
 self.addEventListener('activate', (event) => {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil((async () => {
+    // Drop any caches from a previous version (e.g. the old Streets-only
+    // "pda-tiles-v1" bucket) so stale, never-served-again tiles don't just
+    // sit around consuming storage forever.
+    const names = await caches.keys();
+    await Promise.all(names.filter(n => n !== TILE_CACHE && n.startsWith('pda-tiles-')).map(n => caches.delete(n)));
+    try { indexedDB.deleteDatabase('pda-tile-meta'); } catch (e) {}
+    await self.clients.claim();
+  })());
 });
 
 self.addEventListener('fetch', (event) => {
   const req = event.request;
-  if (req.method !== 'GET' || !isStreetTile(req.url)) return; // let the browser handle everything else as usual
+  if (req.method !== 'GET' || !isCacheableTile(req.url)) return; // let the browser handle everything else as usual
   event.respondWith(handleTileFetch(req));
 });
 
