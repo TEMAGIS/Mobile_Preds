@@ -263,6 +263,7 @@
   .card-type-label { font-size: 14px; font-weight: 700; letter-spacing: -0.2px; flex-shrink: 0; white-space: nowrap; }
   .card-asset-type { font-size: 11px; color: var(--text3); margin-top: 1px; font-style: italic; }
   .card-address { font-size: 12px; color: var(--text2); line-height: 1.4; margin-bottom: 0; }
+  .card-address.card-county { color: var(--text3); }
   .dist-pill { font-size: 11px; font-family: 'DM Mono', monospace; font-weight: 600; color: #003a8c; background: #dce6fb; padding: 3px 8px; border-radius: 6px; flex-shrink: 0; white-space: nowrap; }
   .meta-badges { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 6px; }
   .meta-badge { font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 6px; white-space: nowrap; background: var(--surface2); border: 1px solid var(--border); color: var(--text2); }
@@ -328,6 +329,7 @@
   .sheet-header { padding: 14px 20px 10px; }
   .sheet-name { font-size: 19px; font-weight: 700; letter-spacing: -0.4px; margin-bottom: 3px; }
   .sheet-addr { font-size: 13px; color: var(--text2); line-height: 1.4; }
+  .sheet-addr.sheet-county { color: var(--text3); font-size: 12px; margin-top: 1px; }
   .sheet-dist { font-size: 12px; font-family: 'DM Mono',monospace; font-weight: 700; margin-top: 5px; color: #003a8c; }
   .sdiv { height: 1px; background: var(--border); margin: 0 20px; }
   .sec { padding: 14px 20px; }
@@ -1669,7 +1671,8 @@ function renderCard(a) {
   // genuinely too long, not because a 4.8-mi pill is squatting in the
   // title's space).
   const dist  = a.distance !== null ? `<span class="dist-pill">📍 ${a.distance.toFixed(1)} mi</span>` : '';
-  const cityLine = [[a.city, a.state].filter(Boolean).join(', ') + (a.zip ? ` ${a.zip}` : ''), a.county ? `${a.county} County` : ''].filter(Boolean).join(' · ');
+  const cityStateZip = [a.city, a.state].filter(Boolean).join(', ') + (a.zip ? ` ${a.zip}` : '');
+  const countyLine   = a.county ? `${a.county} County` : '';
   const badges = [
     dist,
     a.dwellingType ? `<span class="meta-badge sector">${escapeHtml(a.dwellingType)}</span>` : '',
@@ -1689,7 +1692,8 @@ function renderCard(a) {
             <div class="card-name">${escapeHtml(title)}</div>
           </div>
         </div>
-        ${cityLine ? `<div class="card-address">${escapeHtml(cityLine)}</div>` : ''}
+        ${cityStateZip ? `<div class="card-address">${escapeHtml(cityStateZip)}</div>` : ''}
+        ${countyLine ? `<div class="card-address card-county">${escapeHtml(countyLine)}</div>` : ''}
         ${badges ? `<div class="meta-badges">${badges}</div>` : ''}
       </div>
     </div>
@@ -2142,7 +2146,8 @@ async function openDetail(id) {
     </div>
     <div class="sheet-header">
       <h2 class="sheet-name" id="detail-asset-name">${escapeHtml(a.address || 'Unknown address')}${a.suiteApt ? ' ' + escapeHtml(a.suiteApt) : ''}</h2>
-      <div class="sheet-addr">${escapeHtml(a.city || '')}${a.city && a.state ? ', ' : ''}${escapeHtml(a.state || '')} ${escapeHtml(String(a.zip || ''))}${a.county ? ' — ' + escapeHtml(a.county) + ' County' : ''}</div>
+      <div class="sheet-addr">${escapeHtml(a.city || '')}${a.city && a.state ? ', ' : ''}${escapeHtml(a.state || '')} ${escapeHtml(String(a.zip || ''))}</div>
+      ${a.county ? `<div class="sheet-addr sheet-county">${escapeHtml(a.county)} County</div>` : ''}
       ${distLine}
     </div>
     ${sectionsHtml}
