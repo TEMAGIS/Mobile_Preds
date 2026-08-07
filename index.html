@@ -266,8 +266,7 @@
   .card-cityzip { font-size: 12px; color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; margin-bottom: 0; }
   .card-type-label { font-size: 14px; font-weight: 700; letter-spacing: -0.2px; flex-shrink: 0; white-space: nowrap; }
   .card-asset-type { font-size: 11px; color: var(--text3); margin-top: 1px; font-style: italic; }
-  .card-address { font-size: 12px; color: var(--text2); line-height: 1.4; margin-bottom: 0; }
-  .card-address.card-county { color: var(--text3); }
+  .card-cityzip.card-county { color: var(--text3); }
   .dist-pill { font-size: 11px; font-family: 'DM Mono', monospace; font-weight: 600; color: #003a8c; background: #dce6fb; padding: 3px 8px; border-radius: 6px; flex-shrink: 0; white-space: nowrap; }
   .meta-badges { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 6px; }
   .meta-badge { font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 6px; white-space: nowrap; background: var(--surface2); border: 1px solid var(--border); color: var(--text2); }
@@ -295,7 +294,8 @@
   .leaflet-popup-content { margin: 0 !important; }
   .pop { padding: 11px 13px; min-width: 160px; }
   .pop-name { font-size: 13px; font-weight: 700; margin-bottom: 2px; color: var(--text); }
-  .pop-type { font-size: 11px; font-weight: 600; }
+  .pop-type { font-size: 15px; font-weight: 700; }
+  .pop-cityzip { font-size: 11px; color: var(--text2); margin-top: 1px; }
   .pop-attach-loading { font-size: 11px; color: var(--text3); margin-top: 7px; }
   .pop-attach { display: flex; gap: 6px; margin-top: 8px; }
   .pop-attach-thumb {
@@ -1696,10 +1696,10 @@ function renderCard(a) {
             <div class="card-addr-block">
               <div class="card-name">${escapeHtml(title)}</div>
               ${cityStateZip ? `<div class="card-cityzip">${escapeHtml(cityStateZip)}</div>` : ''}
+              ${countyLine ? `<div class="card-cityzip card-county">${escapeHtml(countyLine)}</div>` : ''}
             </div>
           </div>
         </div>
-        ${countyLine ? `<div class="card-address card-county">${escapeHtml(countyLine)}</div>` : ''}
         ${badges ? `<div class="meta-badges">${badges}</div>` : ''}
       </div>
     </div>
@@ -1891,6 +1891,7 @@ function buildPopupHtml(a) {
   const color = lvl ? lvl.bg : '#666';
   const label = lvl ? lvl.label : (a.levelRaw || 'Unclassified');
   const title = a.suiteApt ? `${a.address} ${a.suiteApt}` : a.address;
+  const popCityZip = [a.city, a.state].filter(Boolean).join(', ') + (a.zip ? ` ${a.zip}` : '');
   const popIcon = iconHTML(a.level, 28);
   return `<div class="pop" data-oid="${a.objectId}">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
@@ -1898,6 +1899,7 @@ function buildPopupHtml(a) {
         <div class="pop-type" style="color:${color}">${escapeHtml(label)}</div>
       </div>
       <div class="pop-name">${escapeHtml(title)}</div>
+      ${popCityZip ? `<div class="pop-cityzip">${escapeHtml(popCityZip)}</div>` : ''}
       ${a.dwellingType ? `<div style="font-size:11px;color:var(--text3);margin-top:2px">${escapeHtml(a.dwellingType)}</div>` : ''}
       ${renderPopupAttachments(a.objectId)}
     </div>`;
