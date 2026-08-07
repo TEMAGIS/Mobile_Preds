@@ -297,7 +297,7 @@
   .leaflet-popup-content { margin: 0 !important; }
   .pop { padding: 11px 13px; min-width: 160px; }
   .pop-name { font-size: 13px; font-weight: 700; margin-bottom: 2px; color: var(--text); }
-  .pop-type { font-size: 15px; font-weight: 700; }
+  .pop-type { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
   .pop-cityzip { font-size: 11px; color: var(--text2); margin-top: 1px; }
   .pop-attach-loading { font-size: 11px; color: var(--text3); margin-top: 7px; }
   .pop-attach { display: flex; gap: 6px; margin-top: 8px; }
@@ -1904,12 +1904,11 @@ function buildPopupHtml(a) {
   const label = lvl ? lvl.label : (a.levelRaw || 'Unclassified');
   const title = a.suiteApt ? `${a.address} ${a.suiteApt}` : a.address;
   const popCityZip = [a.city, a.state].filter(Boolean).join(', ') + (a.zip ? ` ${a.zip}` : '');
-  const popIcon = iconHTML(a.level, 28);
+  // No icon here — the popup already sits right next to the marker's own
+  // house-in-circle icon on the map, so repeating it inside the popup was
+  // redundant.
   return `<div class="pop" data-oid="${a.objectId}">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-        <div style="flex-shrink:0">${popIcon}</div>
-        <div class="pop-type" style="color:${textColor}">${escapeHtml(label)}</div>
-      </div>
+      <div class="pop-type" style="color:${textColor}">${escapeHtml(label)}</div>
       <div class="pop-name">${escapeHtml(title)}</div>
       ${popCityZip ? `<div class="pop-cityzip">${escapeHtml(popCityZip)}</div>` : ''}
       ${a.dwellingType ? `<div style="font-size:11px;color:var(--text3);margin-top:2px">${escapeHtml(a.dwellingType)}</div>` : ''}
