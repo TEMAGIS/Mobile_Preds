@@ -264,7 +264,10 @@
   .card-addr-block { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
   .card-name { font-size: 14px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: -0.2px; min-width: 0; }
   .card-cityzip { font-size: 12px; color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; margin-bottom: 0; }
-  .card-type-label { font-size: 14px; font-weight: 700; letter-spacing: -0.2px; flex-shrink: 0; white-space: nowrap; }
+  /* Fixed width (sized for the longest label, "Inaccessible") so the
+     divider and address block start at the same x-position on every card
+     regardless of which damage level is shown. */
+  .card-type-label { font-size: 14px; font-weight: 700; letter-spacing: -0.2px; flex-shrink: 0; white-space: nowrap; width: 86px; }
   .card-asset-type { font-size: 11px; color: var(--text3); margin-top: 1px; font-style: italic; }
   .card-cityzip.card-county { color: var(--text3); }
   .dist-pill { font-size: 11px; font-family: 'DM Mono', monospace; font-weight: 600; color: #003a8c; background: #dce6fb; padding: 3px 8px; border-radius: 6px; flex-shrink: 0; white-space: nowrap; }
@@ -630,12 +633,19 @@ function isSoftDeleted(raw) {
 //  SVG (a simple house glyph in a colored circle) rather than fetched
 //  images, so the app stays self-contained and works offline.
 // ════════════════════════════════════════════════════════════════
+// `bg` is the true level color, used for badges/markers/strips where it sits
+// against `txt` (chosen for contrast against `bg` itself), not against the
+// page background. `text` is a separate variant safe to use as literal text
+// color on the app's white/light card backgrounds — `bg` itself fails
+// contrast badly for "major" (2.3:1) and "minor" (1.4:1) since both are
+// bright yellow/orange; `text` darkens just those two enough to pass WCAG AA
+// (~4.5:1) while the others already pass using `bg` as-is.
 const DAMAGE_LEVELS = {
-  destroyed:    { label: 'Destroyed',    bg: '#C52200', txt: '#FFFFFF', order: 0 },
-  major:        { label: 'Major',        bg: '#E89D00', txt: '#000000', order: 1 },
-  minor:        { label: 'Minor',        bg: '#FFD900', txt: '#000000', order: 2 },
-  affected:     { label: 'Affected',     bg: '#7A26A2', txt: '#FFFFFF', order: 3 },
-  inaccessible: { label: 'Inaccessible', bg: '#007BC4', txt: '#FFFFFF', order: 4 },
+  destroyed:    { label: 'Destroyed',    bg: '#C52200', txt: '#FFFFFF', text: '#C52200', order: 0 },
+  major:        { label: 'Major',        bg: '#E89D00', txt: '#000000', text: '#8a5a00', order: 1 },
+  minor:        { label: 'Minor',        bg: '#FFD900', txt: '#000000', text: '#8a6900', order: 2 },
+  affected:     { label: 'Affected',     bg: '#7A26A2', txt: '#FFFFFF', text: '#7A26A2', order: 3 },
+  inaccessible: { label: 'Inaccessible', bg: '#007BC4', txt: '#FFFFFF', text: '#007BC4', order: 4 },
 };
 // Map the raw assessment_level text into one of the 5 keys above.
 // Exact (case-insensitive) match first — falls back to substring match
@@ -1667,6 +1677,7 @@ function renderList() {
 function renderCard(a) {
   const lvl = a.level ? DAMAGE_LEVELS[a.level] : null;
   const color = lvl ? lvl.bg : '#666';
+  const textColor = lvl ? lvl.text : '#666'; // readable-on-white variant for label text
   const label = lvl ? lvl.label : (a.levelRaw || 'Unclassified');
   const iconImg = iconHTML(a.level, 38);
   const title = a.suiteApt ? `${a.address} ${a.suiteApt}` : a.address;
@@ -1691,7 +1702,7 @@ function renderCard(a) {
         <div class="card-top">
           <div class="type-icon">${iconImg}</div>
           <div class="card-titles">
-            <div class="card-type-label" style="color:${color}">${escapeHtml(label)}</div>
+            <div class="card-type-label" style="color:${textColor}">${escapeHtml(label)}</div>
             <div class="card-title-divider"></div>
             <div class="card-addr-block">
               <div class="card-name">${escapeHtml(title)}</div>
@@ -1889,6 +1900,7 @@ document.addEventListener('click', (e) => {
 function buildPopupHtml(a) {
   const lvl = a.level ? DAMAGE_LEVELS[a.level] : null;
   const color = lvl ? lvl.bg : '#666';
+  const textColor = lvl ? lvl.text : '#666'; // readable-on-white variant for label text
   const label = lvl ? lvl.label : (a.levelRaw || 'Unclassified');
   const title = a.suiteApt ? `${a.address} ${a.suiteApt}` : a.address;
   const popCityZip = [a.city, a.state].filter(Boolean).join(', ') + (a.zip ? ` ${a.zip}` : '');
@@ -1896,7 +1908,7 @@ function buildPopupHtml(a) {
   return `<div class="pop" data-oid="${a.objectId}">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
         <div style="flex-shrink:0">${popIcon}</div>
-        <div class="pop-type" style="color:${color}">${escapeHtml(label)}</div>
+        <div class="pop-type" style="color:${textColor}">${escapeHtml(label)}</div>
       </div>
       <div class="pop-name">${escapeHtml(title)}</div>
       ${popCityZip ? `<div class="pop-cityzip">${escapeHtml(popCityZip)}</div>` : ''}
