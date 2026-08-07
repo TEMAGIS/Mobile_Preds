@@ -206,20 +206,22 @@
     position: absolute; bottom: 14px; right: 12px; width: 48px; height: 48px;
     background: var(--tema-blue); color: white; border: none; border-radius: 50%; cursor: pointer;
     display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 16px rgba(0,40,104,0.4);
-    transition: transform 0.15s; z-index: 350;
+    transition: transform 0.15s; z-index: 690;
   }
   #basemap-toggle {
-    /* z-index 350 sits above the basemap tiles (200) and overlay pane
-       (400 inside the map's stacking context, but the map div itself
-       sits below). It also sits below the popup pane (700) so popups
-       that the user manually drags into the corner appear on top of
-       the toggle rather than behind it.
-       Solid TEMA-blue background (not white) so it stays clearly visible
-       at rest against every basemap, including the near-white "Streets"
-       tiles — a white pill on a near-white map was effectively invisible
-       until hovered, which read as the control "appearing and
-       disappearing" depending on cursor position. */
-    position: absolute; top: 12px; left: 12px; z-index: 350;
+    /* Raised to z-index 690 (2026-08-07) — was 350, which sits ABOVE the
+       tile pane (200) and overlay pane (400) but BELOW Leaflet's own
+       markerPane (600) and tooltipPane (650). That meant a marker or
+       cluster icon that happened to render near the top-left corner of
+       the viewport (entirely possible after fitBounds() picks a view
+       that fits every point in a mission — nothing stops the nearest
+       point from landing right there) could visually sit on top of the
+       button, even though the button's own position/CSS were never
+       wrong. 690 sits above every Leaflet pane except the popup pane
+       (700), so only a popup dragged into that exact corner can still
+       cover it — everything else the map can draw (tiles, markers,
+       clusters, tooltips) now renders behind it. */
+    position: absolute; top: 12px; left: 12px; z-index: 690;
     background: var(--tema-blue); color: white; border: 1px solid var(--tema-blue);
     border-radius: 8px; padding: 7px 11px;
     display: flex; align-items: center; gap: 6px;
@@ -238,6 +240,7 @@
   .header-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
   .list-count { font-size: 12px; font-weight: 700; color: var(--text); text-transform: uppercase; letter-spacing: 0.6px; }
   #last-refreshed { font-size: 11px; color: var(--text3); font-family: 'DM Mono', monospace; margin-top: 2px; }
+  #tile-cache-status { font-size: 11px; color: var(--tema-blue); font-weight: 700; margin-top: 2px; }
   .stale-badge { display: inline-block; background: #fdeed3; color: #6b4200; border: 1px solid #d4920a; padding: 1px 6px; border-radius: 6px; font-size: 10px; font-weight: 700; margin-left: 4px; vertical-align: 2px; }
   .sort-toggle {
     font-size: 12px; color: var(--tema-blue); font-weight: 700; cursor: pointer;
@@ -511,6 +514,7 @@
         <div>
           <div class="list-count" id="list-count" aria-live="polite">Loading…</div>
           <div id="last-refreshed" aria-live="polite"></div>
+          <div id="tile-cache-status" aria-live="polite" hidden></div>
         </div>
         <div class="header-actions">
           <button id="filter-toggle-btn" class="filter-btn" onclick="toggleFilterDrawer()" aria-expanded="false" aria-controls="filter-drawer">
@@ -1965,10 +1969,36 @@ let tileWarmInFlight = false;
 function fillArcgisTileUrl(template, t) {
   return template.replace('{z}', t.z).replace('{y}', t.y).replace('{x}', t.x);
 }
+// Small status line shown near "Updated HH:MM" in the list header so there's
+// SOME visible signal for whether it's actually safe to go offline yet —
+// added after a report of going into airplane mode right after loading the
+// map and getting a blank basemap, because the warm was still silently in
+// progress (or hadn't even started) with nothing telling the user that.
+function setTileCacheStatus(text, autoHideMs) {
+  const el = document.getElementById('tile-cache-status');
+  if (!el) return;
+  clearTimeout(setTileCacheStatus._t);
+  if (!text) { el.hidden = true; return; }
+  el.textContent = text;
+  el.hidden = false;
+  if (autoHideMs) setTileCacheStatus._t = setTimeout(() => { el.hidden = true; }, autoHideMs);
+}
+// Resolves once a service worker is actually active and controlling this
+// page, or `false` if that doesn't happen within `timeoutMs` (e.g.
+// registration failed, or the browser is still installing it). Warming the
+// cache before a worker is actively controlling the page would just waste
+// battery/data on fetches that never get intercepted/cached.
+function waitForServiceWorkerReady(timeoutMs) {
+  if (!('serviceWorker' in navigator)) return Promise.resolve(false);
+  return Promise.race([
+    navigator.serviceWorker.ready.then(() => true),
+    new Promise(resolve => setTimeout(() => resolve(false), timeoutMs)),
+  ]);
+}
 // Fire-and-forget prefetch of the z14 fallback tiles for every county
 // represented in the given assets (normally scopedAssets() for whichever
 // mission was just selected). Silently does nothing if service workers
-// aren't supported, we're offline, or a warm is already running.
+// aren't supported/active, we're offline, or a warm is already running.
 async function warmCountyFallbackCache(missionAssets) {
   if (!('serviceWorker' in navigator) || tileWarmInFlight) return;
   if (typeof navigator.onLine === 'boolean' && !navigator.onLine) return;
@@ -1984,6 +2014,16 @@ async function warmCountyFallbackCache(missionAssets) {
     });
     const tiles = Array.from(tileSet.values());
     if (!tiles.length) return;
+    // Give the service worker up to 8s to finish activating before we start
+    // firing warm requests at it — otherwise, right after a fresh page load,
+    // every one of these fetches could sail past an inactive worker and
+    // never get cached at all.
+    const ready = await waitForServiceWorkerReady(8000);
+    if (!ready) {
+      console.warn('Service worker not active after 8s — skipping offline map prefetch for this mission.');
+      return;
+    }
+    setTileCacheStatus(`Caching offline map for ${counties.size} count${counties.size === 1 ? 'y' : 'ies'}…`);
     // Hybrid is 3 stacked Esri layers (imagery + boundary labels + road
     // labels) — all 3 have to be cached per tile for the area to render
     // correctly offline, so expand each map tile into 3 fetch targets.
@@ -1998,15 +2038,21 @@ async function warmCountyFallbackCache(missionAssets) {
       }
     }
     await Promise.all(Array.from({ length: TILE_WARM_CONCURRENCY }, worker));
+    setTileCacheStatus('Offline map ready', 5000);
   } finally {
     tileWarmInFlight = false;
   }
 }
+// Registered immediately (not gated on window 'load') — the map starts
+// fetching tiles as soon as initMap() runs, right after DOMContentLoaded,
+// which can happen well before 'load' fires (that waits for every image
+// etc. to finish). Registering as early as possible gives the service
+// worker the best chance to activate and start controlling the page
+// before those very first tiles are requested, so they have a chance to
+// land in the offline cache too, not just tiles from later panning.
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js').catch(err => {
-      console.warn('Service worker registration failed — offline tile caching disabled:', err);
-    });
+  navigator.serviceWorker.register('sw.js').catch(err => {
+    console.warn('Service worker registration failed — offline tile caching disabled:', err);
   });
 }
 
