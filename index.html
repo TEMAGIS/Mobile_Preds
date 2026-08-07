@@ -1256,8 +1256,13 @@ async function fetchAttachmentInfo(objectId) {
       const data = await res.json();
       console.info(`${attempt.name} response:`, data);
       if (data.error) {
-        lastErr = new Error(`${attempt.name}: ${data.error.code} ${data.error.message}`);
-        debugLog.push(`${attempt.name}: error ${data.error.code} ${data.error.message}`);
+        // ArcGIS often puts the actually-useful explanation in `details`
+        // rather than `message` (e.g. a generic "Invalid Request" message
+        // with the real reason in details[0]) — include both so nothing
+        // gets lost.
+        const detailsTxt = (data.error.details && data.error.details.length) ? ` — ${data.error.details.join('; ')}` : '';
+        lastErr = new Error(`${attempt.name}: ${data.error.code} ${data.error.message || ''}${detailsTxt}`.trim());
+        debugLog.push(`${attempt.name}: HTTP/error ${data.error.code} ${data.error.message || ''}${detailsTxt}`);
         continue;
       }
       const raw = attempt.parse(data) || [];
@@ -2162,7 +2167,13 @@ async function loadAttachmentsInto(a) {
   }
   const result = await getAttachmentInfoCached(a.objectId);
   if (result.state === 'error') {
-    box.innerHTML = `<div style="color:#842029;font-size:13px;line-height:1.5">${escapeHtml(result.message)}<br><span style="color:var(--text3);font-size:11px">Open browser DevTools console for details.</span></div>`;
+    const debugLines = (result.debugLog || []).map(l => escapeHtml(l)).join('<br>');
+    box.innerHTML = `
+      <div style="color:#842029;font-size:13px;line-height:1.5">${escapeHtml(result.message)}</div>
+      <details style="margin-top:8px;font-size:11px;color:var(--text3)" open>
+        <summary style="cursor:pointer">Details (for reporting this)</summary>
+        <div style="margin-top:4px;line-height:1.5">OBJECTID: ${escapeHtml(String(a.objectId))}<br>${debugLines || 'No diagnostic info available.'}</div>
+      </details>`;
     return;
   }
   const infos = result.infos;
@@ -2231,7 +2242,7 @@ async function startApp() {
   bindListHandlers();
   initMap();
   // Show the mission picker immediately (with a loading placeholder) so
-  // it's the first thing the user sees — the map/list stay hidden behind 
+  // it's the first thing the user sees — the map/list stay hidden behind
   // it until a mission is picked in revealApp()/selectMissionFromScreen().
   showMissionScreen();
   await fetchAssets();
