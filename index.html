@@ -18,7 +18,7 @@
     if (p.get('layout') === 'full') document.documentElement.classList.add('layout-full');
   })();
 </script>
-<title>TN Damage Assessments</title>
+<title>PREDS</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
@@ -233,6 +233,20 @@
   #basemap-toggle:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
   #fab-locate:hover { transform: scale(1.08); }
   #fab-locate:active { transform: scale(0.95); }
+  #map-offline-badge {
+    position: absolute; bottom: 14px; left: 12px; z-index: 690;
+    max-width: calc(100% - 78px);
+    background: #fdeed3; color: #6b4200; border: 1px solid #d4920a;
+    border-radius: 8px; padding: 6px 10px; font-size: 11px; font-weight: 700;
+    font-family: 'DM Sans', sans-serif; box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+  }
+  /* Applied to #map-container while setMapOfflineState(true) is active —
+     see the OFFLINE MAP TILE CACHING section. Desaturates/dims only the
+     tile layers (not markers/popups/controls) so a cached, possibly-stale
+     map still reads clearly, rather than looking identical to a live one
+     or, worse, showing blank tiles once panning/zooming runs past what's
+     actually cached. */
+  #map-container.map-degraded .leaflet-tile-pane { filter: grayscale(55%) brightness(0.9) sepia(8%); }
   /* ── List ────────────────────────────────────────────────── */
   #list-section { flex: 1; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
   .list-controls { position: sticky; top: 0; z-index: 10; background: var(--bg); box-shadow: 0 1px 0 rgba(0,0,0,0.04); }
@@ -242,11 +256,6 @@
   #last-refreshed { font-size: 11px; color: var(--text3); font-family: 'DM Mono', monospace; margin-top: 2px; }
   #tile-cache-status { font-size: 11px; color: var(--tema-blue); font-weight: 700; margin-top: 2px; }
   .stale-badge { display: inline-block; background: #fdeed3; color: #6b4200; border: 1px solid #d4920a; padding: 1px 6px; border-radius: 6px; font-size: 10px; font-weight: 700; margin-left: 4px; vertical-align: 2px; }
-  .sort-toggle {
-    font-size: 12px; color: var(--tema-blue); font-weight: 700; cursor: pointer;
-    padding: 6px 10px; border-radius: 6px; border: none; background: none;
-    min-height: 36px; display: flex; align-items: center;
-  }
   #asset-list { display: flex; flex-direction: column; padding: 0 0 80px; }
   /* ── Card ────────────────────────────────────────────────── */
   .asset-card {
@@ -301,6 +310,10 @@
   /* ── User marker ─────────────────────────────────────────── */
   .user-dot { width: 16px; height: 16px; background: var(--tema-blue); border-radius: 50%; border: 3px solid white; box-shadow: 0 0 0 3px rgba(0,40,104,0.3); animation: pulse 2s infinite; }
   @keyframes pulse { 0%,100%{box-shadow:0 0 0 3px rgba(0,40,104,0.3)} 50%{box-shadow:0 0 0 8px rgba(0,40,104,0.08)} }
+  /* Last-known (not live) location fix — amber to match the offline-banner/
+     stale-badge color language used elsewhere, animation off since a
+     pulsing dot reads as "actively tracking," which this isn't. */
+  .user-dot-stale { background: #d4920a; box-shadow: 0 0 0 3px rgba(212,146,10,0.3); animation: none; }
   .leaflet-popup-content-wrapper { border-radius: var(--radius-sm) !important; box-shadow: var(--shadow-lg) !important; font-family: 'DM Sans',sans-serif !important; padding: 0 !important; }
   .leaflet-popup-content { margin: 0 !important; }
   .pop { padding: 11px 13px; min-width: 160px; }
@@ -424,7 +437,7 @@
               fill="#ffffff">TN</text>
       </svg>
       <div>
-        <div class="login-title" id="login-title">TN Damage Assessments</div>
+        <div class="login-title" id="login-title">Preliminary Damage Assessments (PREDS)</div>
         <div class="login-sub">Sign in with your ArcGIS Online account to view preliminary damage assessments near your location.</div>
       </div>
     </div>
@@ -473,11 +486,10 @@
                 font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="74"
                 fill="#ffffff">TN</text>
         </svg>
-        <h1 class="app-title-text">TN Damage Assessments</h1>
+        <h1 class="app-title-text">PREDS</h1>
       </div>
       <div class="header-pills">
         <button class="header-pill" onclick="showMissionScreen()" aria-label="Change mission" id="mission-pill">
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M4 22V4"/><path d="M4 4h14l-2 4 2 4H4"/></svg>
           <span id="mission-pill-label">Mission</span>
         </button>
         <button class="header-pill" onclick="requestLocation()" aria-label="Use my location">
@@ -507,6 +519,7 @@
     <button id="fab-locate" onclick="recenterOnUser()" title="Re-center on my location" aria-label="Re-center on my location">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
     </button>
+    <div id="map-offline-badge" role="status" aria-live="polite" hidden>📡 Offline — showing cached map</div>
   </div>
   <main id="list-section" aria-label="Damage assessments">
     <div class="list-controls">
@@ -521,7 +534,6 @@
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><line x1="4" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="11" y1="18" x2="13" y2="18"/></svg>
             Filter
           </button>
-          <button class="sort-toggle" id="sort-label" onclick="toggleSort()" aria-label="Toggle sort">📍 Nearest</button>
         </div>
       </div>
       <div class="active-filters" id="active-filters" aria-label="Active filters" aria-live="polite"></div>
@@ -589,6 +601,7 @@ const CONFIG = {
   // back in as if it were damage-assessment records.
   tokenKey:    'pda_token_v1',
   cacheKey:    'pda_cache_v1',
+  locationKey: 'pda_last_location_v1',
 };
 // ════════════════════════════════════════════════════════════════
 //  FIELD MAPPING — exact names used by the Preliminary Damage Survey
@@ -1181,6 +1194,11 @@ async function fetchAssets() {
     setOfflineBanner(false);
     cacheData(assets);
     applyMissionsAndRender(false);
+    // Covers assessments added since the last fetch (including the 5-min
+    // auto-refresh) — already-warmed ones are filtered out inside
+    // scheduleTileWarm() itself, so this is cheap to call every time, not
+    // just right after a mission is picked. See "OFFLINE MAP TILE CACHING".
+    scheduleTileWarm(scopedAssets());
   } catch (err) {
     console.error('Fetch failed:', err);
     setLoadingState(false);
@@ -1378,6 +1396,22 @@ function loadCachedData() {
     return raw ? JSON.parse(raw) : null;
   } catch { return null; }
 }
+// Last-known GPS fix, kept separately from the asset cache above so it
+// survives independently — e.g. a field user who loaded the mission days
+// ago and is now offline still gets *a* location (theirs from last time)
+// instead of losing distance sorting/filtering entirely. See
+// useLastKnownLocation() in the GEOLOCATION section.
+function cacheLocation(lat, lng) {
+  try {
+    localStorage.setItem(CONFIG.locationKey, JSON.stringify({ lat, lng, ts: Date.now() }));
+  } catch (e) { /* quota — ignore */ }
+}
+function loadCachedLocation() {
+  try {
+    const raw = localStorage.getItem(CONFIG.locationKey);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
 // ── Status helpers ──────────────────────────────────────────────
 function setLoadingState(loading) {
   document.getElementById('loading-bar').style.display = loading ? 'block' : 'none';
@@ -1399,9 +1433,9 @@ function showError(msg) {
 // ════════════════════════════════════════════════════════════════
 //  STATE
 // ════════════════════════════════════════════════════════════════
-let map, userMarker, userLat = null, userLng = null;
+let map, userMarker, userLat = null, userLng = null, userLocationStale = false;
 let markers = {}, assets = [];
-let activeFilter = 'all', activeBuffer = null, searchTerm = '', selectedId = null, sortByDistance = true;
+let activeFilter = 'all', activeBuffer = null, searchTerm = '', selectedId = null;
 let renderedList = [];
 let refreshTimer = null;
 function getAsset(id) { return assets.find(a => String(a.id) === String(id)); }
@@ -1516,10 +1550,9 @@ function selectMissionFromScreen(key) {
   refreshMarkers();
   renderList();
   setTimeout(fitToScopedAssets, 60);
-  // Fire-and-forget: warm the offline fallback cache for whatever counties
-  // this mission covers. Never blocks the UI — see "OFFLINE MAP TILE
-  // CACHING" above.
-  warmCountyFallbackCache(scopedAssets());
+  // Fire-and-forget: queue offline-cache warming for this mission's
+  // assessments. Never blocks the UI — see "OFFLINE MAP TILE CACHING" above.
+  scheduleTileWarm(scopedAssets());
 }
 function scopedAssets() {
   if (activeMission === 'all') return assets;
@@ -1650,11 +1683,6 @@ function updateActiveFilterBar() {
   btn.classList.toggle('has-filter', chips.length > 0);
 }
 function onSearch() { searchTerm = document.getElementById('search-input').value.toLowerCase(); renderList(); }
-function toggleSort() {
-  sortByDistance = !sortByDistance;
-  document.getElementById('sort-label').textContent = sortByDistance ? '📍 Nearest first' : '🔤 A–Z';
-  renderList();
-}
 function getFiltered() {
   let list = scopedAssets().filter(a => {
     if (activeFilter !== 'all' && a.level !== activeFilter) return false;
@@ -1665,7 +1693,12 @@ function getFiltered() {
     }
     return true;
   });
-  if (sortByDistance && userLat !== null) list.sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity));
+  // Always nearest-first once we have a location fix — the A–Z alternative
+  // (and the header toggle to switch to it) was removed per feedback that
+  // it wasn't needed. Alphabetical is kept only as a fallback for the
+  // window before any location fix exists yet (fresh load, permission not
+  // yet granted, etc.) so the list isn't left in raw fetch order.
+  if (userLat !== null) list.sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity));
   else list.sort((a, b) => a.address.localeCompare(b.address));
   return list;
 }
@@ -1732,10 +1765,6 @@ function renderCard(a) {
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
         Details
       </button>
-      <button class="card-action" data-action="directions" data-asset-id="${sidAttr}" aria-label="Get directions to ${escapeHtml(title)}">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg>
-        Directions
-      </button>
     </div>
   </article>`;
 }
@@ -1752,8 +1781,7 @@ function bindListHandlers() {
     if (btn) {
       e.stopPropagation();
       const id = btn.getAttribute('data-asset-id');
-      if (btn.getAttribute('data-action') === 'directions') openDirections(id);
-      else                                                  openDetail(id);
+      openDetail(id);
       return;
     }
     const card = e.target.closest('.asset-card[data-asset-id]');
@@ -1766,12 +1794,6 @@ function bindListHandlers() {
     e.preventDefault();
     selectAsset(card.getAttribute('data-asset-id'));
   });
-}
-function openDirections(id) {
-  const a = getAsset(id); if (!a) return;
-  const fullAddr = `${a.address}, ${a.city}, ${a.state} ${a.zip}`.trim().replace(/,\s*$/, '');
-  const url = `https://maps.google.com/?q=${encodeURIComponent(fullAddr || `${a.lat},${a.lng}`)}`;
-  window.open(url, '_blank', 'noopener');
 }
 // ════════════════════════════════════════════════════════════════
 //  MAP
@@ -1833,12 +1855,20 @@ function applyBasemap(key) {
   // Add layers in array order; later layers stack visually above earlier
   // ones within Leaflet's tilePane (which itself sits below markerPane,
   // so cluster + marker overlays remain on top automatically).
-  bm.layers.forEach(spec => {
+  bm.layers.forEach((spec, i) => {
     const layer = L.tileLayer(spec.url, {
       maxZoom:     spec.maxZoom,
       attribution: spec.attribution || '',
     }).addTo(map);
     basemapLayers.push(layer);
+    // Wire offline detection to the base imagery layer only (index 0). The
+    // label/road reference overlays legitimately 404 over water and sparse
+    // rural areas even when fully online, so counting their errors would
+    // false-trigger "offline" in perfectly normal use.
+    if (i === 0) {
+      layer.on('tileerror', onBasemapTileError);
+      layer.on('tileload', onBasemapTileLoad);
+    }
   });
   currentBasemap = key;
   // Update the toggle button label to show what the *next* tap will do
@@ -1854,8 +1884,60 @@ function toggleBasemap() {
   applyBasemap(currentBasemap === 'streets' ? 'hybrid' : 'streets');
 }
 
+// ── Degraded / offline map-tile state ───────────────────────────
+// Distinguishes "only cached tiles are available right now" from normal
+// operation and actually shows it, instead of leaving unfetchable tiles
+// blank: a badge over the map, a light desaturation on the tile layer so
+// a cached view visibly reads as "not live," and a temporary cap on how
+// far the map will zoom. That cap matters because tiles are only
+// proactively cached at TILE_WARM_ZOOM around each assessment (see
+// scheduleTileWarm below) — letting someone zoom in further while offline
+// just trades a
+// fully blank screen for a partially blank one, one tile at a time. Both
+// the badge and the cap lift automatically the moment a tile loads
+// successfully again.
+const FULL_TILE_MAX_ZOOM = 19; // matches every BASEMAPS layer's maxZoom
+let mapTilesOffline = false;
+let tileErrorStreak = 0;
+const TILE_ERROR_STREAK_THRESHOLD = 3; // one or two blocked requests can be transient; a streak is a real signal
+function onBasemapTileError() {
+  tileErrorStreak++;
+  if (tileErrorStreak >= TILE_ERROR_STREAK_THRESHOLD) setMapOfflineState(true);
+}
+function onBasemapTileLoad() {
+  tileErrorStreak = 0;
+  setMapOfflineState(false);
+}
+function setMapOfflineState(offline) {
+  if (offline === mapTilesOffline) return;
+  mapTilesOffline = offline;
+  const container = document.getElementById('map-container');
+  if (container) container.classList.toggle('map-degraded', offline);
+  const badge = document.getElementById('map-offline-badge');
+  if (badge) badge.hidden = !offline;
+  if (offline) {
+    if (map.getZoom() > TILE_WARM_ZOOM) map.setZoom(TILE_WARM_ZOOM);
+    map.setMaxZoom(TILE_WARM_ZOOM);
+  } else {
+    map.setMaxZoom(FULL_TILE_MAX_ZOOM);
+  }
+}
+// Browser connectivity events fire immediately on airplane-mode toggle —
+// faster than waiting for a tile request to actually time out — so use
+// them as a fast path, with the tile-error streak above as a fallback for
+// the "reports online but nothing actually loads" case (e.g. a wifi
+// network with no real internet behind it).
+window.addEventListener('offline', () => setMapOfflineState(true));
+window.addEventListener('online', () => {
+  tileErrorStreak = 0;
+  setMapOfflineState(false);
+  // A location that fell back to "last known" while offline is worth
+  // re-checking now that we might actually have a fresh fix again.
+  if (userLocationStale) requestLocation();
+});
+
 // ════════════════════════════════════════════════════════════════
-//  OFFLINE MAP TILE CACHING (Streets basemap only)
+//  OFFLINE MAP TILE CACHING
 // ════════════════════════════════════════════════════════════════
 //  Scoped design, see app-notes: two tiers, both backed by the SAME
 //  service-worker cache (sw.js) so there's one code path, not two.
@@ -1866,34 +1948,42 @@ function toggleBasemap() {
 //  requested again while offline. That's automatic just from panning/
 //  zooming; nothing below is needed for it.
 //
-//  Tier 2 — proactive low-res fallback: as soon as a mission is picked,
-//  warmCountyFallbackCache() below figures out which TN counties that
-//  mission's records fall in, works out which z14 tiles cover each
-//  county's real boundary (not just a box around the points), and issues
+//  Tier 2 — proactive per-assessment fallback (switched from a whole-county
+//  approach to this point-radius approach on 2026-08-08, per feedback that
+//  caching a tight radius around each actual assessment point — at a zoom
+//  useful for looking at the site, not maxed all the way in — was a better
+//  bet than one flat zoom across an entire county): scheduleTileWarm()
+//  below takes any list of assets, works out which TILE_WARM_ZOOM tiles
+//  fall within POINT_CACHE_RADIUS_MILES of each one's lat/lng, and issues
 //  plain fetch() calls for them — one per Hybrid layer per tile, since all
-//  3 stacked layers are needed for the county to render correctly offline.
+//  3 stacked layers are needed for the area to render correctly offline.
 //  Those fetches get intercepted by sw.js's normal fetch handler and land
-//  in the exact same cache as tier 1 — this function doesn't touch the
-//  Cache API directly at all.
+//  in the exact same cache as tier 1 — this code never touches the Cache
+//  API directly at all.
 //
-//  Hybrid (aerial) is now both the default basemap and the one that gets
-//  cached, per the field team's preference for aerial imagery — Streets
-//  (CARTO) tiles are no longer cached at all. See app-notes.md "Map tile
-//  caching" for the switch-over history.
-
-// Simplified TN county boundaries (from US Census county geometry,
-// filtered to state FIPS 47, coordinates rounded + polygons simplified
-// to ~1km tolerance). Only used to compute tile coverage for the tier-2
-// fallback above — not precise enough for anything requiring exact
-// boundaries.
-const TN_COUNTIES = [{"name":"Benton","type":"Polygon","coordinates":[[[-87.9807,36.3533],[-87.919,36.13],[-88.0008,36.0281],[-88.0129,35.9466],[-87.9258,35.9304],[-87.9707,35.8157],[-88.2174,35.8466],[-88.2126,36.1203],[-88.0832,36.2567],[-88.0877,36.3592],[-87.9807,36.3533]]]},{"name":"Bledsoe","type":"Polygon","coordinates":[[[-85.4238,35.5674],[-85.2654,35.7212],[-85.2541,35.7656],[-84.9161,35.7619],[-85.1078,35.5714],[-85.1352,35.4586],[-85.2259,35.3543],[-85.4033,35.4923],[-85.4238,35.5674]]]},{"name":"Campbell","type":"Polygon","coordinates":[[[-84.0043,36.2704],[-84.0699,36.2304],[-84.2275,36.2449],[-84.2418,36.1776],[-84.3727,36.2168],[-84.3299,36.2851],[-84.3499,36.4663],[-84.2596,36.514],[-84.2613,36.592],[-83.9876,36.5896],[-83.9056,36.42],[-84.0043,36.2704]]]},{"name":"Clay","type":"Polygon","coordinates":[[[-85.8139,36.4995],[-85.7886,36.6218],[-85.2763,36.6265],[-85.2849,36.5313],[-85.4388,36.5011],[-85.4954,36.4031],[-85.7041,36.5224],[-85.8139,36.4995]]]},{"name":"Coffee","type":"Polygon","coordinates":[[[-85.877,35.5241],[-85.9136,35.2892],[-86.158,35.3626],[-86.2615,35.3336],[-86.2452,35.6319],[-86.2071,35.7038],[-86.1437,35.6617],[-85.9851,35.6601],[-85.877,35.5241]]]},{"name":"Dyer","type":"Polygon","coordinates":[[[-89.483,36.2127],[-89.1545,36.2047],[-89.1634,36.026],[-89.2802,35.8864],[-89.3428,35.8809],[-89.407,35.9466],[-89.6879,35.9054],[-89.6869,35.9477],[-89.7331,36.0006],[-89.7069,36.001],[-89.6844,36.0517],[-89.594,36.1272],[-89.5944,36.1555],[-89.6295,36.1854],[-89.483,36.2127]]]},{"name":"Grainger","type":"Polygon","coordinates":[[[-83.6675,36.0806],[-83.7327,36.1646],[-83.6674,36.3444],[-83.5325,36.3534],[-83.3868,36.4132],[-83.2806,36.3947],[-83.2553,36.2891],[-83.3217,36.2946],[-83.4671,36.1747],[-83.5411,36.182],[-83.6747,36.1245],[-83.6675,36.0806]]]},{"name":"Hardeman","type":"Polygon","coordinates":[[[-88.7866,34.9953],[-89.1983,34.9945],[-89.1826,35.4328],[-88.8416,35.4278],[-88.7818,35.2476],[-88.7866,34.9953]]]},{"name":"Hickman","type":"Polygon","coordinates":[[[-87.7102,35.7086],[-87.707,35.9059],[-87.5345,35.9931],[-87.2042,35.9592],[-87.2341,35.7247],[-87.3392,35.6591],[-87.4596,35.6151],[-87.5869,35.6533],[-87.6582,35.6093],[-87.7438,35.664],[-87.7102,35.7086]]]},{"name":"Knox","type":"Polygon","coordinates":[[[-83.7327,36.1646],[-83.6675,36.0806],[-83.6733,36.0385],[-83.6546,35.9719],[-83.8535,35.8411],[-83.9947,35.8837],[-84.1663,35.8051],[-84.2684,35.9026],[-84.1952,35.993],[-84.0586,36.0363],[-84.094,36.0689],[-83.9417,36.1864],[-83.7327,36.1646]]]},{"name":"Loudon","type":"Polygon","coordinates":[[[-84.1663,35.8051],[-84.1331,35.6607],[-84.1883,35.6105],[-84.4235,35.6717],[-84.5259,35.6242],[-84.5476,35.6413],[-84.5843,35.6331],[-84.2634,35.8969],[-84.1663,35.8051]]]},{"name":"Marshall","type":"Polygon","coordinates":[[[-86.8283,35.2637],[-86.9065,35.3141],[-86.9608,35.417],[-86.8496,35.5255],[-86.782,35.7066],[-86.6862,35.7101],[-86.6394,35.6859],[-86.6582,35.4353],[-86.5995,35.365],[-86.6026,35.327],[-86.7469,35.2529],[-86.8283,35.2637]]]},{"name":"Morgan","type":"Polygon","coordinates":[[[-84.7008,36.3708],[-84.611,36.2704],[-84.441,36.1635],[-84.3418,36.049],[-84.4461,35.986],[-84.6067,35.9511],[-84.6806,35.9085],[-84.7207,35.9949],[-84.9078,36.1563],[-84.8786,36.2802],[-84.7979,36.2969],[-84.7008,36.3708]]]},{"name":"Polk","type":"Polygon","coordinates":[[[-84.4955,35.2855],[-84.2923,35.2067],[-84.3219,34.9884],[-84.7759,34.9878],[-84.6999,35.171],[-84.7036,35.241],[-84.4955,35.2855]]]},{"name":"Scott","type":"Polygon","coordinates":[[[-84.7853,36.6034],[-84.2613,36.592],[-84.2596,36.514],[-84.3499,36.4663],[-84.3299,36.2851],[-84.3727,36.2168],[-84.441,36.1635],[-84.611,36.2704],[-84.7008,36.3708],[-84.6591,36.3952],[-84.7853,36.6034]]]},{"name":"Union","type":"Polygon","coordinates":[[[-83.6674,36.3444],[-83.7327,36.1646],[-83.9417,36.1864],[-84.0043,36.2704],[-83.9056,36.42],[-83.8055,36.4359],[-83.733,36.345],[-83.6674,36.3444]]]},{"name":"Washington","type":"Polygon","coordinates":[[[-82.3405,36.2528],[-82.4373,36.1547],[-82.5276,36.149],[-82.5951,36.0962],[-82.6478,36.1464],[-82.6296,36.4115],[-82.7026,36.4104],[-82.6807,36.4318],[-82.4383,36.4457],[-82.2999,36.3965],[-82.3405,36.2528]]]},{"name":"White","type":"Polygon","coordinates":[[[-85.6029,35.795],[-85.6826,35.8272],[-85.6373,35.8818],[-85.6446,36.0151],[-85.5093,36.0819],[-85.3094,36.0316],[-85.2131,35.9104],[-85.2694,35.7934],[-85.4742,35.8227],[-85.6029,35.795]]]},{"name":"Wilson","type":"Polygon","coordinates":[[[-86.1532,35.9544],[-86.3104,35.9786],[-86.5156,36.1006],[-86.5943,36.2451],[-86.5434,36.3206],[-86.4517,36.3356],[-86.2985,36.3136],[-86.2833,36.3475],[-86.1747,36.328],[-86.1447,36.3045],[-86.0148,35.9611],[-86.1532,35.9544]]]},{"name":"Bradley","type":"Polygon","coordinates":[[[-84.7036,35.241],[-84.6999,35.171],[-84.7759,34.9878],[-84.977,34.9877],[-85.024,35.1488],[-84.9463,35.2878],[-84.8602,35.3501],[-84.7036,35.241]]]},{"name":"Carroll","type":"Polygon","coordinates":[[[-88.1792,35.8168],[-88.569,35.8248],[-88.6069,35.7894],[-88.7068,35.7911],[-88.6927,36.0627],[-88.6555,36.1173],[-88.5322,36.1154],[-88.5303,36.1516],[-88.2117,36.146],[-88.2174,35.8466],[-88.1779,35.8458],[-88.1792,35.8168]]]},{"name":"Cheatham","type":"Polygon","coordinates":[[[-87.2865,36.3219],[-87.1773,36.4246],[-87.151,36.4166],[-87.1503,36.445],[-87.1204,36.4555],[-86.9888,36.3706],[-86.9132,36.3826],[-86.9977,36.1285],[-87.0541,36.0455],[-87.1826,36.0497],[-87.1499,36.1769],[-87.1773,36.3141],[-87.2865,36.3219]],[[-87.1423,36.2946],[-87.1424,36.2907],[-87.1393,36.2924],[-87.1423,36.2946]]]},{"name":"Claiborne","type":"Polygon","coordinates":[[[-83.4721,36.5973],[-83.3983,36.5349],[-83.3868,36.4132],[-83.5325,36.3534],[-83.6674,36.3444],[-83.733,36.345],[-83.8055,36.4359],[-83.9056,36.42],[-83.9876,36.5896],[-83.6907,36.5826],[-83.6754,36.6008],[-83.4721,36.5973]]]},{"name":"Crockett","type":"Polygon","coordinates":[[[-89.021,35.671],[-89.2712,35.7549],[-89.356,35.8176],[-89.3428,35.8809],[-89.2802,35.8864],[-89.1888,35.9998],[-89.1096,35.8621],[-88.8929,35.7838],[-89.021,35.671]]]},{"name":"Cumberland","type":"Polygon","coordinates":[[[-84.6806,35.9085],[-84.7819,35.825],[-84.9161,35.7619],[-85.2541,35.7656],[-85.2478,35.7867],[-85.2733,35.7879],[-85.2131,35.9104],[-85.2642,35.9792],[-85.2464,36.1007],[-85.1002,36.1386],[-84.9078,36.1563],[-84.7207,35.9949],[-84.6806,35.9085]]]},{"name":"DeKalb","type":"Polygon","coordinates":[[[-85.8852,35.8397],[-86.0148,35.9611],[-86.0597,36.086],[-85.8074,36.1316],[-85.6446,36.0151],[-85.6373,35.8818],[-85.6821,35.8313],[-85.8852,35.8397]]]},{"name":"Fayette","type":"Polygon","coordinates":[[[-89.6443,34.9953],[-89.6328,35.3758],[-89.4742,35.403],[-89.1839,35.3971],[-89.1983,34.9945],[-89.6443,34.9953]]]},{"name":"Fentress","type":"Polygon","coordinates":[[[-85.1204,36.4072],[-85.0439,36.5588],[-84.9431,36.5813],[-84.7318,36.5247],[-84.6591,36.3952],[-84.7979,36.2969],[-84.8786,36.2802],[-84.9078,36.1563],[-85.1002,36.1386],[-85.1196,36.1447],[-85.0825,36.1962],[-85.1222,36.3046],[-85.1204,36.4072]]]},{"name":"Greene","type":"Polygon","coordinates":[[[-82.6478,36.1464],[-82.5772,36.0784],[-82.6029,36.0398],[-82.6323,36.0657],[-82.6836,36.0461],[-82.7545,36.0043],[-82.8301,35.933],[-82.8526,35.9491],[-82.8985,35.9451],[-83.1661,36.1809],[-82.9366,36.3349],[-82.7026,36.4104],[-82.6296,36.4115],[-82.6478,36.1464]]]},{"name":"Grundy","type":"Polygon","coordinates":[[[-85.6073,35.5317],[-85.4856,35.4064],[-85.5586,35.3193],[-85.7094,35.2893],[-85.7401,35.2153],[-85.873,35.2234],[-85.9136,35.2892],[-85.877,35.5241],[-85.6073,35.5317]]]},{"name":"Hamilton","type":"Polygon","coordinates":[[[-85.1352,35.4586],[-85.0163,35.4093],[-84.9463,35.2878],[-85.024,35.1488],[-84.977,34.9877],[-85.4745,34.984],[-85.362,35.0878],[-85.3871,35.1472],[-85.1352,35.4586]]]},{"name":"Hancock","type":"Polygon","coordinates":[[[-83.4721,36.5973],[-82.8304,36.5938],[-82.9505,36.543],[-83.0108,36.5637],[-83.2806,36.3947],[-83.3868,36.4132],[-83.3983,36.5349],[-83.4721,36.5973]]]},{"name":"Hardin","type":"Polygon","coordinates":[[[-87.9849,35.0063],[-88.3805,34.9956],[-88.3608,35.419],[-88.2417,35.4233],[-88.1996,35.3826],[-88.0247,35.3923],[-87.9816,35.2957],[-87.9849,35.0063]]]},{"name":"Henderson","type":"Polygon","coordinates":[[[-88.2417,35.4233],[-88.3608,35.419],[-88.364,35.4928],[-88.5054,35.512],[-88.6136,35.5881],[-88.6069,35.7894],[-88.569,35.8248],[-88.1792,35.8168],[-88.1905,35.6091],[-88.2431,35.5289],[-88.2417,35.4233]]]},{"name":"Houston","type":"Polygon","coordinates":[[[-87.9496,36.2432],[-87.9807,36.3533],[-87.8218,36.3287],[-87.7155,36.3682],[-87.5924,36.3677],[-87.587,36.3418],[-87.5135,36.3347],[-87.5668,36.1779],[-87.7985,36.2448],[-87.9496,36.2432]]]},{"name":"Jackson","type":"Polygon","coordinates":[[[-85.8465,36.2882],[-85.8139,36.4995],[-85.7041,36.5224],[-85.4954,36.4031],[-85.4951,36.3023],[-85.5337,36.2426],[-85.7801,36.238],[-85.8465,36.2882]]]},{"name":"Lake","type":"Polygon","coordinates":[[[-89.3461,36.5032],[-89.3601,36.4093],[-89.4437,36.2366],[-89.483,36.2127],[-89.6295,36.1854],[-89.6998,36.2484],[-89.6024,36.2381],[-89.5347,36.2526],[-89.5395,36.2774],[-89.6203,36.323],[-89.6057,36.3422],[-89.5318,36.3392],[-89.5132,36.3599],[-89.5195,36.4754],[-89.5391,36.4982],[-89.4851,36.4977],[-89.4932,36.4701],[-89.4717,36.457],[-89.4173,36.499],[-89.3461,36.5032]]]},{"name":"Lewis","type":"Polygon","coordinates":[[[-87.3392,35.6591],[-87.2899,35.548],[-87.2945,35.4447],[-87.4485,35.4578],[-87.4488,35.4206],[-87.5754,35.3985],[-87.7176,35.4833],[-87.6582,35.6093],[-87.5869,35.6533],[-87.4596,35.6151],[-87.3392,35.6591]]]},{"name":"McMinn","type":"Polygon","coordinates":[[[-84.5259,35.6242],[-84.4092,35.3984],[-84.401,35.3304],[-84.4955,35.2855],[-84.7036,35.241],[-84.8602,35.3501],[-84.8145,35.437],[-84.6199,35.6447],[-84.5669,35.6298],[-84.5476,35.6413],[-84.5259,35.6242]]]},{"name":"McNairy","type":"Polygon","coordinates":[[[-88.7818,35.2476],[-88.7198,35.2475],[-88.6409,35.361],[-88.3626,35.381],[-88.3805,34.9956],[-88.7866,34.9953],[-88.7818,35.2476]]]},{"name":"Macon","type":"Polygon","coordinates":[[[-85.7886,36.6218],[-85.828,36.4118],[-86.1683,36.4443],[-86.2284,36.4875],[-86.2055,36.6398],[-85.7886,36.6218]]]},{"name":"Maury","type":"Polygon","coordinates":[[[-87.2151,35.8507],[-86.9536,35.7819],[-86.782,35.7066],[-86.8496,35.5255],[-86.9608,35.417],[-87.1209,35.4557],[-87.2066,35.4332],[-87.2263,35.4405],[-87.2279,35.4293],[-87.2952,35.4421],[-87.2899,35.548],[-87.3392,35.6591],[-87.2341,35.7247],[-87.2151,35.8507]]]},{"name":"Montgomery","type":"Polygon","coordinates":[[[-87.587,36.3418],[-87.6411,36.638],[-87.115,36.6424],[-87.1204,36.4555],[-87.1503,36.445],[-87.151,36.4166],[-87.1773,36.4246],[-87.2865,36.3219],[-87.587,36.3418]]]},{"name":"Perry","type":"Polygon","coordinates":[[[-87.7102,35.7086],[-87.7438,35.664],[-87.6582,35.6093],[-87.7176,35.4833],[-87.9732,35.46],[-88.0077,35.4234],[-88.0423,35.4446],[-87.9746,35.521],[-88.0358,35.6218],[-88.0348,35.7173],[-87.9627,35.8409],[-87.8481,35.8041],[-87.7168,35.8387],[-87.7102,35.7086]]]},{"name":"Pickett","type":"Polygon","coordinates":[[[-85.2763,36.6265],[-84.7854,36.6034],[-84.7318,36.5247],[-84.9431,36.5813],[-85.0439,36.5588],[-85.1204,36.4072],[-85.1854,36.4904],[-85.2849,36.5313],[-85.2763,36.6265]]]},{"name":"Putnam","type":"Polygon","coordinates":[[[-85.7801,36.238],[-85.5337,36.2426],[-85.4951,36.3023],[-85.4194,36.2361],[-85.2042,36.1525],[-85.1002,36.1386],[-85.2464,36.1007],[-85.2642,35.9792],[-85.3094,36.0316],[-85.5093,36.0819],[-85.6446,36.0151],[-85.8074,36.1316],[-85.7801,36.238]]]},{"name":"Anderson","type":"Polygon","coordinates":[[[-84.2716,35.9102],[-84.3418,36.049],[-84.441,36.1635],[-84.3727,36.2168],[-84.2418,36.1776],[-84.2275,36.2449],[-84.0699,36.2304],[-84.0043,36.2704],[-83.9417,36.1864],[-84.094,36.0689],[-84.0586,36.0363],[-84.1952,35.993],[-84.2716,35.9102]]]},{"name":"Bedford","type":"Polygon","coordinates":[[[-86.2576,35.4125],[-86.4442,35.3207],[-86.5437,35.3632],[-86.5995,35.365],[-86.6582,35.4353],[-86.6394,35.6859],[-86.5431,35.6976],[-86.4033,35.6189],[-86.3419,35.6643],[-86.2452,35.6319],[-86.2576,35.4125]]]},{"name":"Rhea","type":"Polygon","coordinates":[[[-84.7239,35.7529],[-84.7818,35.6739],[-84.7949,35.5525],[-84.874,35.5502],[-84.907,35.4479],[-84.969,35.4667],[-85.0163,35.4093],[-85.1352,35.4586],[-85.1078,35.5714],[-84.9161,35.7619],[-84.7819,35.825],[-84.7239,35.7529]]]},{"name":"Robertson","type":"Polygon","coordinates":[[[-86.9132,36.3826],[-86.9888,36.3706],[-87.1204,36.4555],[-87.115,36.6424],[-86.605,36.6521],[-86.5643,36.6335],[-86.6988,36.4074],[-86.7548,36.4055],[-86.8248,36.3499],[-86.9132,36.3826]]]},{"name":"Rutherford","type":"Polygon","coordinates":[[[-86.5156,36.1006],[-86.3104,35.9786],[-86.1532,35.9544],[-86.2071,35.7038],[-86.2452,35.6319],[-86.3419,35.6643],[-86.4033,35.6189],[-86.5431,35.6976],[-86.6394,35.6859],[-86.6862,35.7101],[-86.6133,35.7903],[-86.6189,35.9682],[-86.5156,36.1006]]]},{"name":"Sevier","type":"Polygon","coordinates":[[[-83.663,35.5691],[-83.6628,35.6906],[-83.7943,35.8871],[-83.6546,35.9719],[-83.6733,36.0385],[-83.5231,35.9637],[-83.3108,35.8958],[-83.2542,35.6958],[-83.2972,35.6578],[-83.4458,35.6118],[-83.4983,35.563],[-83.663,35.5691]]]},{"name":"Stewart","type":"Polygon","coordinates":[[[-87.6411,36.638],[-87.5924,36.3677],[-87.7155,36.3682],[-87.8218,36.3287],[-87.9807,36.3533],[-88.0585,36.4392],[-88.0325,36.5407],[-88.0705,36.6781],[-87.8496,36.6637],[-87.8532,36.6332],[-87.6411,36.638]]]},{"name":"Tipton","type":"MultiPolygon","coordinates":[[[[-89.9573,35.5287],[-90.0543,35.3893],[-90.1783,35.3821],[-90.169,35.4219],[-90.1077,35.4769],[-90.0591,35.4579],[-90.034,35.4688],[-90.0329,35.5534],[-89.9573,35.5287]]],[[[-89.6328,35.3758],[-89.7025,35.4086],[-89.8893,35.3909],[-90.0416,35.3966],[-89.9336,35.5333],[-89.7581,35.6504],[-89.6511,35.648],[-89.5021,35.5806],[-89.4699,35.5466],[-89.4742,35.403],[-89.6328,35.3758]]]]},{"name":"Van Buren","type":"Polygon","coordinates":[[[-85.4238,35.5674],[-85.5575,35.533],[-85.5946,35.6179],[-85.6029,35.795],[-85.4742,35.8227],[-85.2478,35.7867],[-85.2654,35.7212],[-85.4238,35.5674]]]},{"name":"Warren","type":"Polygon","coordinates":[[[-85.5575,35.533],[-85.877,35.5241],[-85.9851,35.6601],[-85.9849,35.7346],[-85.8852,35.8397],[-85.6821,35.8313],[-85.6076,35.8032],[-85.5946,35.6179],[-85.5575,35.533]]]},{"name":"Blount","type":"Polygon","coordinates":[[[-83.7943,35.8871],[-83.6628,35.6906],[-83.663,35.5691],[-83.7569,35.5636],[-83.8801,35.5187],[-83.9529,35.4606],[-83.9938,35.55],[-84.0816,35.5412],[-84.1883,35.6105],[-84.1331,35.6607],[-84.1663,35.8051],[-83.9947,35.8837],[-83.8535,35.8411],[-83.7943,35.8871]]]},{"name":"Carter","type":"Polygon","coordinates":[[[-81.9838,36.5083],[-81.9498,36.4724],[-82.0589,36.3675],[-81.933,36.2649],[-82.0266,36.1302],[-82.0801,36.1057],[-82.1271,36.1044],[-82.1479,36.1495],[-82.2221,36.1569],[-82.2564,36.2332],[-82.3405,36.2528],[-82.2999,36.3965],[-82.1881,36.4006],[-81.9838,36.5083]]]},{"name":"Davidson","type":"Polygon","coordinates":[[[-86.7872,36.036],[-86.9292,36.0527],[-87.0277,35.9894],[-87.0541,36.0455],[-86.9977,36.1285],[-86.9132,36.3826],[-86.8248,36.3499],[-86.7548,36.4055],[-86.7235,36.3477],[-86.5943,36.2451],[-86.5156,36.1006],[-86.6189,35.9682],[-86.7872,36.036]]]},{"name":"Franklin","type":"Polygon","coordinates":[[[-86.3188,34.9911],[-86.3182,35.127],[-86.2615,35.3336],[-86.158,35.3626],[-85.9136,35.2892],[-85.873,35.2234],[-85.8639,34.9884],[-86.3188,34.9911]]]},{"name":"Hamblen","type":"Polygon","coordinates":[[[-83.4577,36.1554],[-83.4671,36.1747],[-83.3217,36.2946],[-83.2553,36.2891],[-83.1626,36.3453],[-83.0823,36.2423],[-83.1661,36.1809],[-83.2346,36.0851],[-83.2937,36.1382],[-83.4577,36.1554]]]},{"name":"Haywood","type":"Polygon","coordinates":[[[-89.5021,35.5806],[-89.4018,35.8227],[-89.356,35.8176],[-89.2712,35.7549],[-89.0695,35.6927],[-89.0789,35.4314],[-89.1826,35.4328],[-89.1839,35.3971],[-89.4742,35.403],[-89.4699,35.5466],[-89.5021,35.5806]]]},{"name":"Humphreys","type":"Polygon","coordinates":[[[-87.5345,35.9931],[-87.707,35.9059],[-87.7168,35.8387],[-87.8481,35.8041],[-87.9627,35.8409],[-87.9258,35.9304],[-88.0129,35.9466],[-88.0008,36.0281],[-87.919,36.13],[-87.9496,36.2432],[-87.7985,36.2448],[-87.5668,36.1779],[-87.5345,35.9931]]]},{"name":"Lawrence","type":"Polygon","coordinates":[[[-87.5754,35.3985],[-87.4488,35.4206],[-87.4485,35.4578],[-87.2066,35.4332],[-87.2241,34.9993],[-87.606,35.0033],[-87.5888,35.0584],[-87.5754,35.3985]]]},{"name":"Madison","type":"Polygon","coordinates":[[[-88.6069,35.7894],[-88.6136,35.5881],[-88.6759,35.4892],[-88.8416,35.4278],[-89.0789,35.4314],[-89.0695,35.6927],[-89.021,35.671],[-88.8929,35.7838],[-88.9162,35.7973],[-88.6069,35.7894]]]},{"name":"Moore","type":"Polygon","coordinates":[[[-86.5253,35.3547],[-86.4442,35.3207],[-86.2576,35.4125],[-86.2615,35.3336],[-86.3182,35.127],[-86.3662,35.1244],[-86.3922,35.2354],[-86.5273,35.3115],[-86.5253,35.3547]]]},{"name":"Overton","type":"Polygon","coordinates":[[[-85.4951,36.3023],[-85.4954,36.4031],[-85.4388,36.5011],[-85.2849,36.5313],[-85.1854,36.4904],[-85.1204,36.4072],[-85.1222,36.3046],[-85.0825,36.1962],[-85.1196,36.1447],[-85.2042,36.1525],[-85.4194,36.2361],[-85.4951,36.3023]]]},{"name":"Roane","type":"Polygon","coordinates":[[[-84.3418,36.049],[-84.2634,35.8969],[-84.5845,35.6444],[-84.6199,35.6447],[-84.7819,35.825],[-84.6067,35.9511],[-84.4461,35.986],[-84.3418,36.049]]]},{"name":"Smith","type":"Polygon","coordinates":[[[-85.9789,36.4261],[-85.828,36.4118],[-85.8465,36.2882],[-85.7801,36.238],[-85.8074,36.1316],[-86.0597,36.086],[-86.1368,36.2959],[-85.9789,36.4261]]]},{"name":"Sumner","type":"Polygon","coordinates":[[[-86.2284,36.4875],[-86.2985,36.3136],[-86.4517,36.3356],[-86.5434,36.3206],[-86.5943,36.2451],[-86.7235,36.3477],[-86.7548,36.4055],[-86.6988,36.4074],[-86.5643,36.6335],[-86.4735,36.6517],[-86.2055,36.6398],[-86.2284,36.4875]]]},{"name":"Weakley","type":"Polygon","coordinates":[[[-88.6927,36.0627],[-88.8409,36.1235],[-88.9598,36.2228],[-88.9502,36.4092],[-88.8164,36.4107],[-88.8273,36.5029],[-88.5163,36.5014],[-88.5322,36.1154],[-88.6555,36.1173],[-88.6927,36.0627]]]},{"name":"Williamson","type":"Polygon","coordinates":[[[-87.2151,35.8507],[-87.1826,36.0497],[-87.0541,36.0455],[-87.0277,35.9894],[-86.9292,36.0527],[-86.7872,36.036],[-86.6189,35.9682],[-86.6133,35.7903],[-86.6862,35.7101],[-86.782,35.7066],[-86.9536,35.7819],[-87.2151,35.8507]]]},{"name":"Chester","type":"Polygon","coordinates":[[[-88.6136,35.5881],[-88.5054,35.512],[-88.364,35.4928],[-88.3518,35.4067],[-88.3626,35.381],[-88.6409,35.361],[-88.7198,35.2475],[-88.7818,35.2476],[-88.8416,35.4278],[-88.6759,35.4892],[-88.6136,35.5881]]]},{"name":"Decatur","type":"Polygon","coordinates":[[[-88.0423,35.4446],[-87.9752,35.4142],[-87.9846,35.3921],[-88.1996,35.3826],[-88.2417,35.4233],[-88.2431,35.5289],[-88.1905,35.6091],[-88.1779,35.8458],[-87.9707,35.8157],[-88.0348,35.7173],[-88.0358,35.6218],[-87.9746,35.521],[-88.0423,35.4446]]]},{"name":"Dickson","type":"MultiPolygon","coordinates":[[[[-87.1424,36.2907],[-87.1423,36.2946],[-87.1393,36.2924],[-87.1424,36.2907]]],[[[-87.2042,35.9592],[-87.5345,35.9931],[-87.5668,36.1779],[-87.5135,36.3347],[-87.1773,36.3141],[-87.1499,36.1769],[-87.2042,35.9592]]]]},{"name":"Gibson","type":"Polygon","coordinates":[[[-88.6927,36.0627],[-88.7068,35.7911],[-88.9162,35.7973],[-89.1096,35.8621],[-89.1888,35.9998],[-89.1634,36.026],[-89.1545,36.2047],[-88.9612,36.2016],[-88.9598,36.2228],[-88.8409,36.1235],[-88.6927,36.0627]]]},{"name":"Giles","type":"Polygon","coordinates":[[[-86.8283,35.2637],[-86.8363,34.9918],[-87.2241,34.9993],[-87.2066,35.4332],[-87.1209,35.4557],[-86.9608,35.417],[-86.9065,35.3141],[-86.8283,35.2637]]]},{"name":"Cocke","type":"Polygon","coordinates":[[[-83.2767,36.0077],[-83.1661,36.1809],[-82.8985,35.9451],[-82.9133,35.9241],[-82.898,35.8813],[-82.984,35.778],[-83.1649,35.76],[-83.2555,35.715],[-83.3108,35.8958],[-83.2767,36.0077]]]},{"name":"Hawkins","type":"Polygon","coordinates":[[[-82.8304,36.5938],[-82.6092,36.5941],[-82.6762,36.4234],[-82.9366,36.3349],[-83.0823,36.2423],[-83.1626,36.3453],[-83.2553,36.2891],[-83.2806,36.3947],[-83.0108,36.5637],[-82.9505,36.543],[-82.8304,36.5938]]]},{"name":"Henry","type":"Polygon","coordinates":[[[-87.9909,36.3601],[-88.0877,36.3592],[-88.0832,36.2567],[-88.2126,36.1203],[-88.2117,36.146],[-88.5303,36.1516],[-88.5163,36.5014],[-88.0533,36.4971],[-88.0585,36.4392],[-87.9909,36.3601]]]},{"name":"Jefferson","type":"Polygon","coordinates":[[[-83.4577,36.1554],[-83.2937,36.1382],[-83.2346,36.0851],[-83.2767,36.0077],[-83.3108,35.8958],[-83.5231,35.9637],[-83.6733,36.0385],[-83.6594,36.0855],[-83.6747,36.1245],[-83.5411,36.182],[-83.4671,36.1747],[-83.4577,36.1554]]]},{"name":"Johnson","type":"Polygon","coordinates":[[[-81.6469,36.6119],[-81.708,36.5362],[-81.6959,36.4916],[-81.7151,36.4534],[-81.7259,36.3404],[-81.7649,36.3387],[-81.8008,36.3581],[-81.9081,36.302],[-81.933,36.2649],[-82.0589,36.3675],[-81.9498,36.4724],[-81.9838,36.5083],[-81.8267,36.6142],[-81.6469,36.6119]]]},{"name":"Lauderdale","type":"Polygon","coordinates":[[[-89.5021,35.5806],[-89.6511,35.648],[-89.7581,35.6504],[-89.9098,35.5379],[-89.8849,35.6551],[-89.9374,35.6657],[-89.9558,35.6906],[-89.9563,35.7334],[-89.91,35.7594],[-89.8656,35.7466],[-89.8212,35.7567],[-89.7039,35.8203],[-89.7093,35.8389],[-89.7725,35.8651],[-89.756,35.8968],[-89.407,35.9466],[-89.3428,35.8809],[-89.356,35.8176],[-89.4018,35.8227],[-89.5021,35.5806]]]},{"name":"Lincoln","type":"Polygon","coordinates":[[[-86.3188,34.9911],[-86.8363,34.9918],[-86.8283,35.2637],[-86.7469,35.2529],[-86.6026,35.327],[-86.5995,35.365],[-86.5437,35.3632],[-86.5253,35.3547],[-86.5273,35.3115],[-86.3922,35.2354],[-86.3662,35.1244],[-86.3182,35.127],[-86.3188,34.9911]]]},{"name":"Marion","type":"Polygon","coordinates":[[[-85.5586,35.3193],[-85.4441,35.2626],[-85.362,35.0878],[-85.4745,34.984],[-85.8639,34.9884],[-85.873,35.2234],[-85.7401,35.2153],[-85.7094,35.2893],[-85.5586,35.3193]]]},{"name":"Meigs","type":"Polygon","coordinates":[[[-84.7239,35.7529],[-84.6199,35.6447],[-84.8145,35.437],[-84.8602,35.3501],[-84.9463,35.2878],[-85.0163,35.4093],[-84.969,35.4667],[-84.907,35.4479],[-84.874,35.5502],[-84.7949,35.5525],[-84.7818,35.6739],[-84.7239,35.7529]]]},{"name":"Monroe","type":"Polygon","coordinates":[[[-84.4955,35.2855],[-84.401,35.3304],[-84.4092,35.3984],[-84.5259,35.6242],[-84.4235,35.6717],[-84.1883,35.6105],[-84.0816,35.5412],[-83.9938,35.55],[-83.9614,35.4595],[-84.0023,35.4225],[-84.0381,35.3484],[-84.0214,35.3014],[-84.0557,35.2682],[-84.0975,35.2474],[-84.2237,35.2691],[-84.2902,35.2256],[-84.2923,35.2067],[-84.4955,35.2855]]]},{"name":"Obion","type":"Polygon","coordinates":[[[-89.3461,36.5032],[-88.8273,36.5029],[-88.8164,36.4107],[-88.9502,36.4092],[-88.9612,36.2016],[-89.483,36.2127],[-89.4437,36.2366],[-89.3601,36.4093],[-89.3461,36.5032]]]},{"name":"Sequatchie","type":"Polygon","coordinates":[[[-85.6073,35.5317],[-85.4238,35.5674],[-85.4033,35.4923],[-85.2259,35.3543],[-85.3871,35.1472],[-85.4441,35.2626],[-85.5586,35.3193],[-85.4856,35.4064],[-85.6073,35.5317]]]},{"name":"Shelby","type":"Polygon","coordinates":[[[-89.6328,35.3758],[-89.6443,34.9953],[-90.3093,34.9957],[-90.2956,35.0401],[-90.1939,35.0616],[-90.1601,35.1288],[-90.1006,35.1167],[-90.0654,35.1377],[-90.0774,35.2255],[-90.1051,35.2543],[-90.1521,35.256],[-90.1689,35.282],[-90.1589,35.3006],[-90.1149,35.3039],[-90.0896,35.3798],[-90.0543,35.3893],[-89.9573,35.5287],[-89.9336,35.5333],[-90.0416,35.3966],[-89.8893,35.3909],[-89.7025,35.4086],[-89.6328,35.3758]]]},{"name":"Sullivan","type":"Polygon","coordinates":[[[-82.6092,36.5941],[-81.9341,36.5942],[-81.9226,36.6162],[-81.8267,36.6142],[-81.9838,36.5083],[-82.1881,36.4006],[-82.2999,36.3965],[-82.4383,36.4457],[-82.6807,36.4318],[-82.6092,36.5941]]]},{"name":"Unicoi","type":"Polygon","coordinates":[[[-82.463,36.0073],[-82.5575,35.9547],[-82.6113,35.9732],[-82.6029,36.0398],[-82.5772,36.0784],[-82.5951,36.0962],[-82.5276,36.149],[-82.4373,36.1547],[-82.3405,36.2528],[-82.2564,36.2332],[-82.2221,36.1569],[-82.2355,36.1407],[-82.3756,36.1056],[-82.4095,36.0834],[-82.463,36.0073]]]},{"name":"Wayne","type":"Polygon","coordinates":[[[-87.9849,35.0063],[-87.9816,35.2957],[-88.0247,35.3923],[-87.9846,35.3921],[-87.9752,35.4142],[-88.0077,35.4234],[-87.9732,35.46],[-87.7176,35.4833],[-87.5754,35.3985],[-87.5888,35.0584],[-87.606,35.0033],[-87.9849,35.0063]]]},{"name":"Trousdale","type":"Polygon","coordinates":[[[-86.1747,36.328],[-86.2833,36.3475],[-86.2284,36.4875],[-86.1683,36.4443],[-85.9789,36.4261],[-86.1368,36.2959],[-86.1747,36.328]]]},{"name":"Cannon","type":"Polygon","coordinates":[[[-85.8852,35.8397],[-85.9849,35.7346],[-85.9851,35.6601],[-86.1437,35.6617],[-86.2071,35.7038],[-86.1532,35.9544],[-86.0148,35.9611],[-85.8852,35.8397]]]}];
-
-function findCountyGeom(name) {
-  if (!name) return null;
-  const norm = String(name).trim().toLowerCase();
-  const hit = TN_COUNTIES.find(c => c.name.toLowerCase() === norm);
-  return hit || null;
-}
+//  Runs incrementally, not just once per mission: scheduleTileWarm() is
+//  called (a) right after a mission is picked, for every asset in it, and
+//  (b) at the end of every successful fetchAssets() — including the 5-min
+//  auto-refresh — for whatever assets are currently in scope. Either call
+//  is cheap even when nothing's new, because everything already warmed
+//  gets filtered out immediately (see warmedAssetKeys below) — so a new
+//  assessment logged by another field user while this device still has
+//  service gets its own area cached automatically, without anyone needing
+//  to reselect the mission or do anything else.
+//
+//  Kept deliberately gentle in the background so this never makes the app
+//  feel slow or locked up right after loading, while there's still
+//  service: each warm batch is fire-and-forget (never awaited by anything
+//  that blocks rendering), waits TILE_WARM_START_DELAY_MS before starting
+//  so foreground map/list/asset-data traffic gets a head start on the
+//  connection, runs at a modest concurrency (TILE_WARM_CONCURRENCY), and
+//  multiple calls queue behind each other (tileWarmQueue) instead of all
+//  firing at once and competing for bandwidth.
+//
+//  Hybrid (aerial) is the only basemap that gets cached, per the field
+//  team's preference for aerial imagery — Streets (CARTO) tiles are not
+//  cached at all. See app-notes.md "Map tile caching" for the full history,
+//  including the earlier whole-county approach this replaced.
 
 function lonLatToTileXY(lon, lat, z) {
   const latRad = lat * Math.PI / 180;
@@ -1902,69 +1992,34 @@ function lonLatToTileXY(lon, lat, z) {
   const y = Math.floor((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n);
   return { x, y };
 }
-function tileXYToLonLat(x, y, z) {
-  const n = Math.pow(2, z);
-  const lon = x / n * 360 - 180;
-  const latRad = Math.atan(Math.sinh(Math.PI * (1 - 2 * y / n)));
-  return { lon, lat: latRad * 180 / Math.PI };
-}
-function pointInRing(lon, lat, ring) {
-  let inside = false;
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    const xi = ring[i][0], yi = ring[i][1];
-    const xj = ring[j][0], yj = ring[j][1];
-    const intersect = ((yi > lat) !== (yj > lat)) &&
-      (lon < (xj - xi) * (lat - yi) / (yj - yi) + xi);
-    if (intersect) inside = !inside;
-  }
-  return inside;
-}
-function pointInCountyGeom(lon, lat, geom) {
-  const polys = geom.type === 'MultiPolygon' ? geom.coordinates : [geom.coordinates];
-  for (const poly of polys) {
-    if (!poly.length || !pointInRing(lon, lat, poly[0])) continue; // not inside outer ring
-    let inHole = false;
-    for (let h = 1; h < poly.length; h++) {
-      if (pointInRing(lon, lat, poly[h])) { inHole = true; break; }
-    }
-    if (!inHole) return true;
-  }
-  return false;
-}
-// z14 tiles whose center or any corner falls inside the county polygon.
-// Testing 5 points per candidate tile (not just the center) means tiles
-// the boundary just clips still get included, at the cost of very
-// slightly over-covering past the true edge — acceptable for a coarse
-// fallback layer, and arguably helpful right at county lines.
-function tilesForCounty(geom, z) {
-  const polys = geom.type === 'MultiPolygon' ? geom.coordinates : [geom.coordinates];
-  let minLon = Infinity, maxLon = -Infinity, minLat = Infinity, maxLat = -Infinity;
-  polys.forEach(poly => poly[0].forEach(([lon, lat]) => {
-    if (lon < minLon) minLon = lon;
-    if (lon > maxLon) maxLon = lon;
-    if (lat < minLat) minLat = lat;
-    if (lat > maxLat) maxLat = lat;
-  }));
-  const nw = lonLatToTileXY(minLon, maxLat, z);
-  const se = lonLatToTileXY(maxLon, minLat, z);
+// Tiles covering a square bounding box of side ~2*radiusMiles centered on
+// (lat, lng) — a simple bounding box, not a precise circle, since this only
+// needs to pick "which tiles to prefetch," not render an exact boundary.
+// Longitude-degrees-per-mile shrinks with latitude (meridians converge
+// toward the poles), so the longitude delta is corrected by cos(latitude);
+// the latitude delta doesn't need that correction.
+function tilesForPointRadius(lat, lng, radiusMiles, z) {
+  const dLat = radiusMiles / 69.0; // ~69 miles per degree of latitude, roughly constant
+  const cos = Math.cos(lat * Math.PI / 180);
+  const dLng = radiusMiles / (69.0 * (cos || 1));
+  const nw = lonLatToTileXY(lng - dLng, lat + dLat, z);
+  const se = lonLatToTileXY(lng + dLng, lat - dLat, z);
+  const minX = Math.min(nw.x, se.x), maxX = Math.max(nw.x, se.x);
+  const minY = Math.min(nw.y, se.y), maxY = Math.max(nw.y, se.y);
   const tiles = [];
-  for (let x = nw.x; x <= se.x; x++) {
-    for (let y = nw.y; y <= se.y; y++) {
-      const c0 = tileXYToLonLat(x, y, z);
-      const c1 = tileXYToLonLat(x + 1, y + 1, z);
-      const pts = [
-        [(c0.lon + c1.lon) / 2, (c0.lat + c1.lat) / 2],
-        [c0.lon, c0.lat], [c1.lon, c0.lat], [c0.lon, c1.lat], [c1.lon, c1.lat],
-      ];
-      if (pts.some(([lon, lat]) => pointInCountyGeom(lon, lat, geom))) tiles.push({ x, y, z });
-    }
+  for (let x = minX; x <= maxX; x++) {
+    for (let y = minY; y <= maxY; y++) tiles.push({ x, y, z });
   }
   return tiles;
 }
 
-const TILE_WARM_ZOOM = 14;
-const TILE_WARM_CONCURRENCY = 6;
-let tileWarmInFlight = false;
+const POINT_CACHE_RADIUS_MILES = 0.5; // immediate site + surrounding neighborhood, not a whole county
+const TILE_WARM_ZOOM = 16; // useful street/property-level detail without maxing out at the imagery's finest zoom (19)
+const TILE_WARM_CONCURRENCY = 4;
+const TILE_WARM_START_DELAY_MS = 4000; // let foreground map/list/asset traffic get a head start on the connection first
+let tileWarmQueue = Promise.resolve(); // serializes warm batches so overlapping calls don't compete for bandwidth
+const warmedAssetKeys = new Set();     // OBJECTIDs already queued for warming this session
+const warmedTileKeys = new Set();      // "z/x/y" tiles already fetched this session
 // Fills in an Esri tile URL template's {z}/{y}/{x} placeholders for one tile.
 function fillArcgisTileUrl(template, t) {
   return template.replace('{z}', t.z).replace('{y}', t.y).replace('{x}', t.x);
@@ -1995,54 +2050,68 @@ function waitForServiceWorkerReady(timeoutMs) {
     new Promise(resolve => setTimeout(() => resolve(false), timeoutMs)),
   ]);
 }
-// Fire-and-forget prefetch of the z14 fallback tiles for every county
-// represented in the given assets (normally scopedAssets() for whichever
-// mission was just selected). Silently does nothing if service workers
-// aren't supported/active, we're offline, or a warm is already running.
-async function warmCountyFallbackCache(missionAssets) {
-  if (!('serviceWorker' in navigator) || tileWarmInFlight) return;
-  if (typeof navigator.onLine === 'boolean' && !navigator.onLine) return;
-  tileWarmInFlight = true;
-  try {
-    const counties = new Set();
-    (missionAssets || []).forEach(a => { if (a.county) counties.add(String(a.county).trim()); });
-    const tileSet = new Map();
-    counties.forEach(name => {
-      const geom = findCountyGeom(name);
-      if (!geom) return; // unmatched county name — tier 1 still covers it as it's browsed
-      tilesForCounty(geom, TILE_WARM_ZOOM).forEach(t => tileSet.set(`${t.z}/${t.x}/${t.y}`, t));
-    });
-    const tiles = Array.from(tileSet.values());
-    if (!tiles.length) return;
-    // Give the service worker up to 8s to finish activating before we start
-    // firing warm requests at it — otherwise, right after a fresh page load,
-    // every one of these fetches could sail past an inactive worker and
-    // never get cached at all.
-    const ready = await waitForServiceWorkerReady(8000);
-    if (!ready) {
-      console.warn('Service worker not active after 8s — skipping offline map prefetch for this mission.');
-      return;
-    }
-    setTileCacheStatus(`Caching offline map for ${counties.size} count${counties.size === 1 ? 'y' : 'ies'}…`);
-    // Hybrid is 3 stacked Esri layers (imagery + boundary labels + road
-    // labels) — all 3 have to be cached per tile for the area to render
-    // correctly offline, so expand each map tile into 3 fetch targets.
-    const layerUrls = BASEMAPS.hybrid.layers.map(l => l.url);
-    const urls = [];
-    tiles.forEach(t => layerUrls.forEach(tpl => urls.push(fillArcgisTileUrl(tpl, t))));
-    let i = 0;
-    async function worker() {
-      while (i < urls.length) {
-        const url = urls[i++];
-        try { await fetch(url, { mode: 'no-cors' }); } catch (e) { /* offline mid-warm, or a blocked tile — skip it */ }
-      }
-    }
-    await Promise.all(Array.from({ length: TILE_WARM_CONCURRENCY }, worker));
-    setTileCacheStatus('Offline map ready', 5000);
-  } finally {
-    tileWarmInFlight = false;
-  }
+// Entry point: call with any list of assets (a freshly-picked mission's
+// assets, or the current mission scope after any fetchAssets(), including
+// the auto-refresh timer) whenever there's a chance to cache their
+// surroundings. Safe to call repeatedly and with overlapping/duplicate
+// assets — already-warmed ones (by OBJECTID, not the positional `id`,
+// which fetchAssets reassigns by array index on every fetch and isn't
+// stable across fetches) are filtered out here, and the real work is
+// queued rather than run immediately.
+function scheduleTileWarm(assetList) {
+  if (!('serviceWorker' in navigator)) return;
+  const fresh = (assetList || []).filter(a => {
+    const key = a && (a.objectId ?? a.id);
+    if (key === undefined || key === null || warmedAssetKeys.has(key)) return false;
+    return Number.isFinite(a.lat) && Number.isFinite(a.lng);
+  });
+  if (!fresh.length) return;
+  // Mark warmed immediately (not after the fetches finish) so a fast-
+  // following call — e.g. an auto-refresh landing while the previous warm
+  // is still queued — doesn't re-queue the same assets a second time.
+  fresh.forEach(a => warmedAssetKeys.add(a.objectId ?? a.id));
+  tileWarmQueue = tileWarmQueue.then(() => runTileWarm(fresh)).catch(() => {});
 }
+async function runTileWarm(assetList) {
+  if (typeof navigator.onLine === 'boolean' && !navigator.onLine) return;
+  // Give foreground work (initial map tiles, the asset list fetch, any
+  // attachment thumbnails) a head start on the connection before this
+  // background batch starts competing for bandwidth.
+  await new Promise(resolve => setTimeout(resolve, TILE_WARM_START_DELAY_MS));
+  if (typeof navigator.onLine === 'boolean' && !navigator.onLine) return; // could've gone offline during the delay
+  const tileSet = new Map();
+  assetList.forEach(a => {
+    tilesForPointRadius(a.lat, a.lng, POINT_CACHE_RADIUS_MILES, TILE_WARM_ZOOM).forEach(t => {
+      const key = `${t.z}/${t.x}/${t.y}`;
+      if (!warmedTileKeys.has(key)) tileSet.set(key, t);
+    });
+  });
+  const tiles = Array.from(tileSet.values());
+  if (!tiles.length) return;
+  const ready = await waitForServiceWorkerReady(8000);
+  if (!ready) {
+    console.warn('Service worker not active after 8s — skipping offline map prefetch for these assessments.');
+    return;
+  }
+  setTileCacheStatus(`Caching offline map for ${assetList.length} assessment${assetList.length === 1 ? '' : 's'}…`);
+  // Hybrid is 3 stacked Esri layers (imagery + boundary labels + road
+  // labels) — all 3 have to be cached per tile for the area to render
+  // correctly offline, so expand each map tile into 3 fetch targets.
+  const layerUrls = BASEMAPS.hybrid.layers.map(l => l.url);
+  const urls = [];
+  tiles.forEach(t => layerUrls.forEach(tpl => urls.push(fillArcgisTileUrl(tpl, t))));
+  let i = 0;
+  async function worker() {
+    while (i < urls.length) {
+      const url = urls[i++];
+      try { await fetch(url, { mode: 'no-cors' }); } catch (e) { /* offline mid-warm, or a blocked tile — skip it */ }
+    }
+  }
+  await Promise.all(Array.from({ length: TILE_WARM_CONCURRENCY }, worker));
+  tiles.forEach(t => warmedTileKeys.add(`${t.z}/${t.x}/${t.y}`));
+  setTileCacheStatus('Offline map ready', 5000);
+}
+
 // Registered immediately (not gated on window 'load') — the map starts
 // fetching tiles as soon as initMap() runs, right after DOMContentLoaded,
 // which can happen well before 'load' fires (that waits for every image
@@ -2157,7 +2226,20 @@ function renderPopupAttachments(objectId) {
 // would mean hundreds of attachment queries before the user asks for any.
 async function loadPopupAttachments(a, marker) {
   const cached = attachmentCache.get(a.objectId);
-  if (cached && cached.status === 'done') return; // already resolved, popup HTML already reflects it
+  if (cached && cached.status === 'done') {
+    // Data's already in the shared cache, but the *currently displayed*
+    // popup HTML doesn't necessarily reflect it yet — that happens whenever
+    // the fetch finished while this exact popup was closed (or finished
+    // after the initial bind but before this reopen), since Leaflet only
+    // shows whatever HTML was last set via bindPopup()/setPopupContent(),
+    // not a fresh render on every open. Previously this returned early on
+    // the (wrong) assumption the popup was already up to date, which left
+    // it stuck showing "Loading photos…" forever on every subsequent open
+    // even though the photos had actually loaded — re-rendering here is
+    // cheap, so just always bring the popup in line with the cache.
+    marker.setPopupContent(buildPopupHtml(a));
+    return;
+  }
   await getAttachmentInfoCached(a.objectId);
   if (!marker.isPopupOpen()) return; // user moved on — don't fight the current popup
   marker.setPopupContent(buildPopupHtml(a));
@@ -2223,13 +2305,25 @@ function selectAsset(id) {
     // plugin's helper for exactly this case — without it, openPopup()
     // on a clustered marker is a no-op.
     if (clusterGroup && clusterGroup.hasLayer(mk)) {
+      // zoomToShowLayer picks whatever zoom is actually needed to separate
+      // this marker out of its cluster, which can be deeper than
+      // TILE_WARM_ZOOM if points are packed tightly together — there's no
+      // way to force a shallower zoom here without leaving the marker
+      // clustered, so this one case can still land somewhere the offline
+      // cache doesn't cover.
       clusterGroup.zoomToShowLayer(mk, () => mk.openPopup());
     } else {
       mk.openPopup();
-      map.flyTo([a.lat, a.lng], Math.max(map.getZoom(), 14), { duration: 0.9 });
+      // Always land on exactly TILE_WARM_ZOOM (not just "at least" it) so
+      // selecting an assessment consistently lines up with the zoom level
+      // the offline per-assessment cache actually warmed — previously this
+      // used Math.max(map.getZoom(), 14), which could leave the view at whatever
+      // deeper zoom the user had already panned to, landing somewhere the
+      // proactive cache never warmed.
+      map.flyTo([a.lat, a.lng], TILE_WARM_ZOOM, { duration: 0.9 });
     }
   } else {
-    map.flyTo([a.lat, a.lng], 14, { duration: 0.9 });
+    map.flyTo([a.lat, a.lng], TILE_WARM_ZOOM, { duration: 0.9 });
   }
   document.querySelectorAll('.asset-card').forEach(c => c.classList.remove('selected'));
   const card = document.getElementById('card-' + a.id);
@@ -2239,14 +2333,20 @@ function selectAsset(id) {
 //  GEOLOCATION
 // ════════════════════════════════════════════════════════════════
 function requestLocation() {
-  if (!navigator.geolocation) return;
+  if (!navigator.geolocation) { useLastKnownLocation(); return; }
   document.getElementById('loc-label').textContent = '…';
   navigator.geolocation.getCurrentPosition(onLocationSuccess, () => {
-    document.getElementById('loc-label').textContent = 'Locate';
-    // A distance filter can't do anything without a fix — drop back to
-    // "Any distance" rather than silently showing zero results.
-    if (activeBuffer !== null) clearBufferFilter();
-    alert('Could not get your location. Please enable location access.');
+    // No fresh fix — airplane mode, GPS still resolving indoors, or the
+    // user declined the permission prompt. Rather than dropping location/
+    // distance entirely, fall back to wherever we last had a fix (see
+    // useLastKnownLocation()). Only alert if we truly have nothing at all.
+    if (!useLastKnownLocation()) {
+      document.getElementById('loc-label').textContent = 'Locate';
+      // A distance filter can't do anything without a fix — drop back to
+      // "Any distance" rather than silently showing zero results.
+      if (activeBuffer !== null) clearBufferFilter();
+      alert('Could not get your location. Please enable location access.');
+    }
   }, { timeout: 10000, enableHighAccuracy: true });
 }
 function recenterOnUser() {
@@ -2255,6 +2355,8 @@ function recenterOnUser() {
 }
 function onLocationSuccess(pos) {
   userLat = pos.coords.latitude; userLng = pos.coords.longitude;
+  userLocationStale = false;
+  cacheLocation(userLat, userLng);
   document.getElementById('loc-label').textContent = 'Located ✓';
   if (userMarker) map.removeLayer(userMarker);
   userMarker = L.marker([userLat, userLng], {
@@ -2264,6 +2366,28 @@ function onLocationSuccess(pos) {
   map.flyTo([userLat, userLng], 10, { duration: 1 });
   assets = assets.map(a => ({ ...a, distance: haversine(userLat, userLng, a.lat, a.lng) }));
   renderList();
+}
+// Falls back to the last GPS fix we successfully cached (see cacheLocation
+// in onLocationSuccess) when a fresh one isn't available right now. Marked
+// visually as stale (amber dot, "Last known" pill label) so it's clear this
+// isn't a live position — the field user could easily have moved since.
+// Returns false (and touches nothing) if there's no cached fix to fall
+// back to at all, so the caller can still show its own "no location"
+// message in that case.
+function useLastKnownLocation() {
+  const cached = loadCachedLocation();
+  if (!cached) return false;
+  userLat = cached.lat; userLng = cached.lng;
+  userLocationStale = true;
+  document.getElementById('loc-label').textContent = 'Last known';
+  if (userMarker) map.removeLayer(userMarker);
+  userMarker = L.marker([userLat, userLng], {
+    icon: L.divIcon({ className: '', html: '<div class="user-dot user-dot-stale"></div>', iconSize: [16, 16], iconAnchor: [8, 8] }),
+    zIndexOffset: 1000,
+  }).addTo(map);
+  assets = assets.map(a => ({ ...a, distance: haversine(userLat, userLng, a.lat, a.lng) }));
+  renderList();
+  return true;
 }
 function haversine(la1, lo1, la2, lo2) {
   const R = 3958.8, dL = r(la2 - la1), dO = r(lo2 - lo1);
@@ -2515,7 +2639,8 @@ async function startApp() {
   // Discover layer capabilities (hasAttachments, etc.) — runs in parallel
   // with everything else; the result is consulted when a detail is opened.
   fetchLayerMeta();
-  if (navigator.geolocation) navigator.geolocation.getCurrentPosition(onLocationSuccess, () => {}, { timeout: 5000 });
+  if (navigator.geolocation) navigator.geolocation.getCurrentPosition(onLocationSuccess, () => useLastKnownLocation(), { timeout: 5000 });
+  else useLastKnownLocation();
   if (CONFIG.refreshInterval > 0) {
     if (refreshTimer) clearInterval(refreshTimer);
     refreshTimer = setInterval(fetchAssets, CONFIG.refreshInterval);
