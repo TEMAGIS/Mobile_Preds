@@ -35,7 +35,17 @@
     --shadow: 0 2px 12px rgba(0,0,0,0.08); --shadow-lg: 0 8px 32px rgba(0,0,0,0.14);
     --radius: 14px; --radius-sm: 8px;
   }
-  html, body { height: 100%; margin: 0; padding: 0; font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); -webkit-font-smoothing: antialiased; }
+  /* overscroll-behavior-y: none stops the browser's native "pull down to
+     reload the page" gesture at the document level (2026-08-12) — added
+     after a report of dragging the assessment list down far enough to
+     trigger a full page reload, which re-runs the entire boot sequence
+     (re-auth, re-fetch) instead of just the in-app refresh the list itself
+     already supports. #list-section's own overscroll-behavior: contain
+     (below) stops the drag from visually scrolling the page behind it, but
+     some mobile browsers' pull-to-refresh is a document-level gesture that
+     isn't fully suppressed by containment on an inner scroller alone — this
+     belt-and-suspenders rule closes that gap. */
+  html, body { height: 100%; margin: 0; padding: 0; overscroll-behavior-y: none; font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); -webkit-font-smoothing: antialiased; }
   #app { display: flex; flex-direction: column; height: 100%; min-height: 100vh; max-width: 480px; margin: 0 auto; background: var(--bg); }
   /* App is hidden until the user is signed in */
   #app[hidden] { display: none !important; }
@@ -329,6 +339,12 @@
   }
   .pop-attach-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .pop-attach-more { color: var(--text2); font-size: 12px; font-weight: 700; background: var(--surface3, #eef1f5); }
+  /* Shown while a popup thumbnail's full image is still downloading, and as
+     the fallback look if it fails — same shimmer/pattern as the detail
+     sheet's .attachment-tile.loading (2026-08-12: popup thumbnails had no
+     loading/error state at all before this, unlike the detail sheet). */
+  .pop-attach-thumb.loading { background: linear-gradient(90deg, var(--surface2) 25%, #ececec 50%, var(--surface2) 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; }
+  .pop-attach-thumb.pop-attach-broken { font-size: 15px; color: var(--text3); cursor: default; }
   /* ── Detail Sheet ────────────────────────────────────────── */
   #detail-sheet { position: fixed; inset: 0; z-index: 2000; pointer-events: none; }
   #detail-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.55); opacity: 0; transition: opacity 0.3s; }
@@ -1630,12 +1646,12 @@ function setFilter(el, key) {
   activeFilter = key;
   updateActiveFilterBar();
   renderList();
-  // Drawer stays open after picking a level — matches setBuffer() below,
-  // which never auto-closed. Removed the old auto-close (2026-08-12) per
-  // feedback pointing out the inconsistency: with two independent filter
-  // groups in the same drawer (level + distance), closing right after the
-  // first tap forced a re-open just to also set the other one. Closing is
-  // now only ever explicit, via the Filter toggle button.
+  // Drawer closes on selection, same as setBuffer() below (2026-08-12,
+  // reversing the "stays open" change made earlier the same day) — per
+  // follow-up feedback, picking either a damage level or a distance
+  // should close the drawer right away rather than needing an explicit
+  // Filter-button tap afterward.
+  toggleFilterDrawer(true);
 }
 function clearTypeFilter() {
   const allBtn = document.querySelector('.fgt[data-key="all"]');
@@ -1657,6 +1673,8 @@ function setBuffer(el, miles) {
   } else {
     renderList();
   }
+  // Closes on selection, matching setFilter() above (2026-08-12).
+  toggleFilterDrawer(true);
 }
 function clearBufferFilter() {
   document.querySelectorAll('.buft').forEach(c => { c.classList.remove('active'); c.setAttribute('aria-pressed', 'false'); });
@@ -1819,14 +1837,14 @@ const BASEMAPS = {
     label: 'Streets',
     layers: [
       {
-        // CARTO Voyager (2026-08-12, was "light_all"/Positron) — per
-        // feedback that Streets should show more places on it. Same free
-        // CARTO CDN, no API key, so this is a drop-in style swap; Voyager
-        // adds terrain color, more labeled places/POIs, and general
-        // reference detail that Positron deliberately leaves out (Positron
-        // is designed to be a plain, low-contrast background for data
-        // overlays, which is exactly what made it feel sparse here).
-        url:         'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+        // Reverted to CARTO Positron ("light_all") on 2026-08-12 — briefly
+        // tried Voyager (rastertiles/voyager) for more visible places/POIs,
+        // but Positron renders building footprints (subtle gray outlines at
+        // higher zoom) that Voyager doesn't show as clearly, and those
+        // footprints turned out to be more useful for this app than
+        // Voyager's extra labels/color. Same free CARTO CDN either way, no
+        // API key.
+        url:         'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
         attribution: '© OpenStreetMap © CARTO',
         maxZoom:     19,
       },
@@ -1965,20 +1983,28 @@ window.addEventListener('online', () => {
 //  caching a tight radius around each actual assessment point — at a zoom
 //  useful for looking at the site, not maxed all the way in — was a better
 //  bet than one flat zoom across an entire county): scheduleTileWarm()
-//  below takes any list of assets, works out which TILE_WARM_ZOOM tiles
-//  fall within POINT_CACHE_RADIUS_MILES of each one's lat/lng, and issues
-//  plain fetch() calls for them — one per Hybrid layer per tile, since all
-//  3 stacked layers are needed for the area to render correctly offline.
+//  below takes any list of assets, works out which tiles (across
+//  TILE_WARM_ZOOM_RANGE, not just one zoom — see that constant) fall within
+//  POINT_CACHE_RADIUS_MILES of each one's lat/lng, and issues plain
+//  fetch() calls for them — one per Hybrid layer per tile, since all 3
+//  stacked layers are needed for the area to render correctly offline.
 //  Those fetches get intercepted by sw.js's normal fetch handler and land
 //  in the exact same cache as tier 1 — this code never touches the Cache
 //  API directly at all.
 //
+//  Capped to the TILE_WARM_MAX_ASSETS closest assessments to the user's
+//  location (2026-08-12) — see scheduleTileWarm() for why: caching several
+//  zoom levels per site (added the same day, see TILE_WARM_ZOOM_RANGE) adds
+//  up fast across a mission with many far-flung assessments, so only the
+//  nearest ones get proactively warmed rather than the entire mission scope.
+//
 //  Runs incrementally, not just once per mission: scheduleTileWarm() is
 //  called (a) right after a mission is picked, for every asset in it, and
 //  (b) at the end of every successful fetchAssets() — including the 5-min
-//  auto-refresh — for whatever assets are currently in scope. Either call
-//  is cheap even when nothing's new, because everything already warmed
-//  gets filtered out immediately (see warmedAssetKeys below) — so a new
+//  auto-refresh — for whatever assets are currently in scope (subject to
+//  the nearest-50 cap above, recomputed each time). Either call is cheap
+//  even when nothing's new, because everything already warmed gets
+//  filtered out immediately (see warmedAssetKeys below) — so a new
 //  assessment logged by another field user while this device still has
 //  service gets its own area cached automatically, without anyone needing
 //  to reselect the mission or do anything else.
@@ -2026,7 +2052,22 @@ function tilesForPointRadius(lat, lng, radiusMiles, z) {
 }
 
 const POINT_CACHE_RADIUS_MILES = 0.5; // immediate site + surrounding neighborhood, not a whole county
-const TILE_WARM_ZOOM = 16; // useful street/property-level detail without maxing out at the imagery's finest zoom (19)
+const TILE_WARM_ZOOM = 16; // the "canonical" zoom — still what selectAsset()/setMapOfflineState() fly to and cap at
+// Zoom levels proactively cached around each site (2026-08-12, was just
+// TILE_WARM_ZOOM alone) — added after a report of the map going blank when
+// selecting an assessment whose marker was still clustered on first load:
+// clusterGroup.zoomToShowLayer() has to zoom in past TILE_WARM_ZOOM to pull
+// a marker out of a tight cluster, landing outside the single-zoom cache.
+// Caching a small range around 16 instead of just 16 covers that case (and
+// a little slack if the map ends up slightly more zoomed out) without
+// trying to cover every possible zoom — tile count roughly quadruples per
+// zoom level higher for the same physical area, so this range (~15-49
+// tiles/layer/site depending on level) already costs several times what a
+// single zoom did; going further (e.g. to 18) would cost several times more
+// again on top of that. If tight clusters needing an even deeper zoom keep
+// causing this in practice, this range is the first thing to widen.
+const TILE_WARM_ZOOM_RANGE = [15, 16, 17];
+const TILE_WARM_MAX_ASSETS = 50; // cap below, see scheduleTileWarm()
 const TILE_WARM_CONCURRENCY = 4;
 const TILE_WARM_START_DELAY_MS = 4000; // let foreground map/list/asset traffic get a head start on the connection first
 let tileWarmQueue = Promise.resolve(); // serializes warm batches so overlapping calls don't compete for bandwidth
@@ -2070,12 +2111,29 @@ function waitForServiceWorkerReady(timeoutMs) {
 // which fetchAssets reassigns by array index on every fetch and isn't
 // stable across fetches) are filtered out here, and the real work is
 // queued rather than run immediately.
+//
+// Capped to the TILE_WARM_MAX_ASSETS (50) closest assessments to the
+// user's current location (2026-08-12) — a mission can span far more sites
+// than that, and now that each one is cached across a range of zoom levels
+// (see TILE_WARM_ZOOM_RANGE above) rather than just one, warming every
+// single assessment in a large/spread-out mission could mean an enormous
+// amount of background fetching and storage. Recomputed on every call
+// (mission pick, and every fetchAssets()/auto-refresh) rather than fixed
+// once — as the user moves or the location fix updates, sites that newly
+// fall into the nearest 50 get queued on their next call, even though a
+// warm already ran earlier for a different set of 50. Without a location
+// fix yet, there's no meaningful "closest" — falls back to just capping at
+// the first 50 in whatever order the list arrived in.
 function scheduleTileWarm(assetList) {
   if (!('serviceWorker' in navigator)) return;
-  const fresh = (assetList || []).filter(a => {
-    const key = a && (a.objectId ?? a.id);
-    if (key === undefined || key === null || warmedAssetKeys.has(key)) return false;
-    return Number.isFinite(a.lat) && Number.isFinite(a.lng);
+  const candidates = (assetList || []).filter(a => a && Number.isFinite(a.lat) && Number.isFinite(a.lng));
+  const prioritized = userLat !== null
+    ? [...candidates].sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity))
+    : candidates;
+  const nearest = prioritized.slice(0, TILE_WARM_MAX_ASSETS);
+  const fresh = nearest.filter(a => {
+    const key = a.objectId ?? a.id;
+    return key !== undefined && key !== null && !warmedAssetKeys.has(key);
   });
   if (!fresh.length) return;
   // Mark warmed immediately (not after the fetches finish) so a fast-
@@ -2093,9 +2151,11 @@ async function runTileWarm(assetList) {
   if (typeof navigator.onLine === 'boolean' && !navigator.onLine) return; // could've gone offline during the delay
   const tileSet = new Map();
   assetList.forEach(a => {
-    tilesForPointRadius(a.lat, a.lng, POINT_CACHE_RADIUS_MILES, TILE_WARM_ZOOM).forEach(t => {
-      const key = `${t.z}/${t.x}/${t.y}`;
-      if (!warmedTileKeys.has(key)) tileSet.set(key, t);
+    TILE_WARM_ZOOM_RANGE.forEach(z => {
+      tilesForPointRadius(a.lat, a.lng, POINT_CACHE_RADIUS_MILES, z).forEach(t => {
+        const key = `${t.z}/${t.x}/${t.y}`;
+        if (!warmedTileKeys.has(key)) tileSet.set(key, t);
+      });
     });
   });
   const tiles = Array.from(tileSet.values());
@@ -2225,8 +2285,16 @@ function renderPopupAttachments(objectId) {
   const MAX = 4;
   const shown = result.infos.slice(0, MAX);
   const extra = result.infos.length - shown.length;
+  // Loading shimmer + broken-image fallback (2026-08-12) — these are the
+  // exact same full-resolution attachment files as the detail sheet's grid,
+  // just shown small via CSS (ArcGIS's feature-attachment endpoint has no
+  // separate resized/thumbnail variant to request instead), so a slow or
+  // flaky field connection can leave one stuck loading or failing outright.
+  // The detail sheet already handled that with a shimmer + fallback icon;
+  // these popup tiles previously had neither, so a failed load just sat
+  // there as a permanently broken image with no feedback.
   const tiles = shown.map((att, i) => att.isImage
-    ? `<div class="pop-attach-thumb" data-idx="${i}"><img src="${escapeHtml(att.url)}" alt="${escapeHtml(att.name)}" loading="lazy"></div>`
+    ? `<div class="pop-attach-thumb loading" data-idx="${i}"><img src="${escapeHtml(att.url)}" alt="${escapeHtml(att.name)}" loading="lazy" onload="this.parentElement.classList.remove('loading')" onerror="this.parentElement.classList.remove('loading');this.parentElement.classList.add('pop-attach-broken');this.parentElement.textContent='⚠️'"></div>`
     : `<div class="pop-attach-thumb pop-attach-file" data-idx="${i}" title="${escapeHtml(att.name)}">📄</div>`
   ).join('');
   const more = extra > 0 ? `<div class="pop-attach-thumb pop-attach-more" data-idx="${MAX}">+${extra}</div>` : '';
