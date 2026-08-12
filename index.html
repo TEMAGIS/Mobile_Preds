@@ -1630,7 +1630,12 @@ function setFilter(el, key) {
   activeFilter = key;
   updateActiveFilterBar();
   renderList();
-  if (key !== 'all') toggleFilterDrawer(true);
+  // Drawer stays open after picking a level — matches setBuffer() below,
+  // which never auto-closed. Removed the old auto-close (2026-08-12) per
+  // feedback pointing out the inconsistency: with two independent filter
+  // groups in the same drawer (level + distance), closing right after the
+  // first tap forced a re-open just to also set the other one. Closing is
+  // now only ever explicit, via the Filter toggle button.
 }
 function clearTypeFilter() {
   const allBtn = document.querySelector('.fgt[data-key="all"]');
@@ -1814,7 +1819,14 @@ const BASEMAPS = {
     label: 'Streets',
     layers: [
       {
-        url:         'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+        // CARTO Voyager (2026-08-12, was "light_all"/Positron) — per
+        // feedback that Streets should show more places on it. Same free
+        // CARTO CDN, no API key, so this is a drop-in style swap; Voyager
+        // adds terrain color, more labeled places/POIs, and general
+        // reference detail that Positron deliberately leaves out (Positron
+        // is designed to be a plain, low-contrast background for data
+        // overlays, which is exactly what made it feel sparse here).
+        url:         'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
         attribution: '© OpenStreetMap © CARTO',
         maxZoom:     19,
       },
