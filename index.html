@@ -2358,14 +2358,29 @@ function onLocationSuccess(pos) {
   userLocationStale = false;
   cacheLocation(userLat, userLng);
   document.getElementById('loc-label').textContent = 'Located ✓';
-  if (userMarker) map.removeLayer(userMarker);
-  userMarker = L.marker([userLat, userLng], {
-    icon: L.divIcon({ className: '', html: '<div class="user-dot"></div>', iconSize: [16, 16], iconAnchor: [8, 8] }),
-    zIndexOffset: 1000,
-  }).addTo(map);
-  map.flyTo([userLat, userLng], 10, { duration: 1 });
+  // Distance/list update FIRST and unconditionally — this is the part that
+  // actually matters everywhere (list sort/filter, popups, detail sheet).
+  // The user-location marker + fly-to below is map polish; it used to run
+  // first, so if it ever threw (e.g. Leaflet doing something unexpected
+  // with a map whose container was still settling right as the mission
+  // picker was dismissed) the function aborted right there and these two
+  // lines never ran — leaving the "Located ✓" label showing with no
+  // distance values until the user tapped Locate again and got a run that
+  // didn't hit the same issue. Wrapping the marker/flyTo in its own
+  // try/catch below means that can't happen anymore even if that map code
+  // does throw for some environment-specific reason.
   assets = assets.map(a => ({ ...a, distance: haversine(userLat, userLng, a.lat, a.lng) }));
   renderList();
+  try {
+    if (userMarker) map.removeLayer(userMarker);
+    userMarker = L.marker([userLat, userLng], {
+      icon: L.divIcon({ className: '', html: '<div class="user-dot"></div>', iconSize: [16, 16], iconAnchor: [8, 8] }),
+      zIndexOffset: 1000,
+    }).addTo(map);
+    map.flyTo([userLat, userLng], 10, { duration: 1 });
+  } catch (err) {
+    console.warn('Could not place/fly to the user-location marker (list distances were still updated):', err);
+  }
 }
 // Falls back to the last GPS fix we successfully cached (see cacheLocation
 // in onLocationSuccess) when a fresh one isn't available right now. Marked
@@ -2380,13 +2395,20 @@ function useLastKnownLocation() {
   userLat = cached.lat; userLng = cached.lng;
   userLocationStale = true;
   document.getElementById('loc-label').textContent = 'Last known';
-  if (userMarker) map.removeLayer(userMarker);
-  userMarker = L.marker([userLat, userLng], {
-    icon: L.divIcon({ className: '', html: '<div class="user-dot user-dot-stale"></div>', iconSize: [16, 16], iconAnchor: [8, 8] }),
-    zIndexOffset: 1000,
-  }).addTo(map);
+  // Same ordering fix as onLocationSuccess: update distances/list first and
+  // unconditionally, then isolate the marker placement in its own
+  // try/catch so it can't take the list update down with it if it throws.
   assets = assets.map(a => ({ ...a, distance: haversine(userLat, userLng, a.lat, a.lng) }));
   renderList();
+  try {
+    if (userMarker) map.removeLayer(userMarker);
+    userMarker = L.marker([userLat, userLng], {
+      icon: L.divIcon({ className: '', html: '<div class="user-dot user-dot-stale"></div>', iconSize: [16, 16], iconAnchor: [8, 8] }),
+      zIndexOffset: 1000,
+    }).addTo(map);
+  } catch (err) {
+    console.warn('Could not place the last-known-location marker (list distances were still updated):', err);
+  }
   return true;
 }
 function haversine(la1, lo1, la2, lo2) {
