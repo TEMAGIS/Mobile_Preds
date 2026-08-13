@@ -218,6 +218,19 @@
     display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 16px rgba(0,40,104,0.4);
     transition: transform 0.15s; z-index: 690;
   }
+  /* Stacked directly above #fab-locate (2026-08-12) — lets the user jump
+     back out to "every assessment in this mission" after zooming/panning
+     in on individual sites, rather than only ever seeing that view once at
+     mission load. Same size/style as #fab-locate, just a lighter fill so
+     the two don't visually compete for "primary action" status. */
+  #fab-fit-all {
+    position: absolute; bottom: 70px; right: 12px; width: 48px; height: 48px;
+    background: white; color: var(--tema-blue); border: 1px solid var(--border); border-radius: 50%; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 16px rgba(0,0,0,0.22);
+    transition: transform 0.15s; z-index: 690;
+  }
+  #fab-fit-all:hover { transform: scale(1.08); }
+  #fab-fit-all:active { transform: scale(0.95); }
   #basemap-toggle {
     /* Raised to z-index 690 (2026-08-07) — was 350, which sits ABOVE the
        tile pane (200) and overlay pane (400) but BELOW Leaflet's own
@@ -531,6 +544,9 @@
     <button id="basemap-toggle" type="button" onclick="toggleBasemap()" aria-label="Switch to Streets basemap">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><polygon points="12 2 22 8.5 12 15 2 8.5 12 2"/><polyline points="2 15.5 12 22 22 15.5"/></svg>
       <span class="basemap-label">Streets</span>
+    </button>
+    <button id="fab-fit-all" onclick="fitToScopedAssets()" title="Zoom to fit all assessments" aria-label="Zoom to fit all assessments">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3"/></svg>
     </button>
     <button id="fab-locate" onclick="recenterOnUser()" title="Re-center on my location" aria-label="Re-center on my location">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
@@ -1574,12 +1590,22 @@ function scopedAssets() {
   if (activeMission === 'all') return assets;
   return assets.filter(a => missionKeyOf(a) === activeMission);
 }
+// Shared with the offline tile-cache's "overview" zoom (see "OFFLINE MAP
+// TILE CACHING" below) so whatever gets proactively cached for the
+// big-picture view always matches what fitBounds() actually shows here —
+// bump this if the padding/zoom feel here ever changes.
+const FIT_ALL_MAX_ZOOM = 14;
+// Zooms/pans to fit every currently-scoped assessment on screen at once —
+// runs automatically right after a mission is picked, and is also wired to
+// the map's "Fit all" button (2026-08-12) so the user can jump back out to
+// this big-picture view on demand after panning/zooming in on individual
+// sites, rather than only ever seeing it once at mission load.
 function fitToScopedAssets() {
   if (!map) return;
   const list = scopedAssets();
   if (!list.length) return;
   const bounds = L.latLngBounds(list.map(a => [a.lat, a.lng]));
-  if (bounds.isValid()) map.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 });
+  if (bounds.isValid()) map.fitBounds(bounds, { padding: [40, 40], maxZoom: FIT_ALL_MAX_ZOOM });
 }
 // Shared by the live-fetch success path and the offline/cached fallback:
 // recompute the mission list + default selection, then re-render the
@@ -1919,13 +1945,13 @@ function toggleBasemap() {
 // operation and actually shows it, instead of leaving unfetchable tiles
 // blank: a badge over the map, a light desaturation on the tile layer so
 // a cached view visibly reads as "not live," and a temporary cap on how
-// far the map will zoom. That cap matters because tiles are only
-// proactively cached at TILE_WARM_ZOOM around each assessment (see
-// scheduleTileWarm below) — letting someone zoom in further while offline
-// just trades a
-// fully blank screen for a partially blank one, one tile at a time. Both
-// the badge and the cap lift automatically the moment a tile loads
-// successfully again.
+// far the map will zoom. That cap matters because TILE_WARM_ZOOM is the
+// deepest zoom guaranteed to be proactively cached (see scheduleTileWarm
+// below — a compact mission's whole extent gets cached this deep, and even
+// the large-mission fallback path always covers at least this zoom) —
+// letting someone zoom in further while offline just trades a fully blank
+// screen for a partially blank one, one tile at a time. Both the badge and
+// the cap lift automatically the moment a tile loads successfully again.
 const FULL_TILE_MAX_ZOOM = 19; // matches every BASEMAPS layer's maxZoom
 let mapTilesOffline = false;
 let tileErrorStreak = 0;
@@ -1978,36 +2004,41 @@ window.addEventListener('online', () => {
 //  requested again while offline. That's automatic just from panning/
 //  zooming; nothing below is needed for it.
 //
-//  Tier 2 — proactive per-assessment fallback (switched from a whole-county
-//  approach to this point-radius approach on 2026-08-08, per feedback that
-//  caching a tight radius around each actual assessment point — at a zoom
-//  useful for looking at the site, not maxed all the way in — was a better
-//  bet than one flat zoom across an entire county): scheduleTileWarm()
-//  below takes any list of assets, works out which tiles (across
-//  TILE_WARM_ZOOM_RANGE, not just one zoom — see that constant) fall within
-//  POINT_CACHE_RADIUS_MILES of each one's lat/lng, and issues plain
-//  fetch() calls for them — one per Hybrid layer per tile, since all 3
-//  stacked layers are needed for the area to render correctly offline.
-//  Those fetches get intercepted by sw.js's normal fetch handler and land
-//  in the exact same cache as tier 1 — this code never touches the Cache
-//  API directly at all.
+//  Tier 2 — proactive fallback, reworked 2026-08-12 from "a small radius
+//  around each individual assessment" to "the WHOLE current mission's
+//  extent, at two zooms": the default per-assessment zoom (TILE_WARM_ZOOM)
+//  and the "fit all assessments" overview zoom (FIT_ALL_MAX_ZOOM-capped,
+//  see fitToScopedAssets() and the new "Fit all" map button). Caching the
+//  actual bounding box instead of separate circles per site also closes
+//  the gaps a user would previously hit while panning BETWEEN two nearby
+//  assessments, which the old per-point design left uncached. Both zooms
+//  get fetched via scheduleTileWarm()/runTileWarm() below, one Hybrid
+//  layer-fetch per tile per zoom, landing in the exact same sw.js-managed
+//  cache as tier 1 — this code never touches the Cache API directly.
 //
-//  Capped to the TILE_WARM_MAX_ASSETS closest assessments to the user's
-//  location (2026-08-12) — see scheduleTileWarm() for why: caching several
-//  zoom levels per site (added the same day, see TILE_WARM_ZOOM_RANGE) adds
-//  up fast across a mission with many far-flung assessments, so only the
-//  nearest ones get proactively warmed rather than the entire mission scope.
+//  Safety valve: caching a mission's ENTIRE extent at the detail zoom only
+//  stays affordable for a geographically compact mission — tile count
+//  grows with the physical area covered, and TN PDA missions can in
+//  principle span a whole county or region after a large event (this is
+//  literally why the original whole-county design got replaced with a
+//  per-point one back on 2026-08-08). So: if the mission's extent at
+//  TILE_WARM_ZOOM would exceed TILE_WARM_EXTENT_TILE_CAP tiles, this falls
+//  back to the OLD per-point approach instead (a tight radius around just
+//  the TILE_WARM_MAX_ASSETS closest assessments, across TILE_WARM_ZOOM_RANGE
+//  for some cluster-reveal slack) rather than trying to cache the whole
+//  (possibly enormous) area. The overview zoom is always cached in full
+//  regardless — being more zoomed out, it stays cheap no matter how
+//  physically large the mission is.
 //
 //  Runs incrementally, not just once per mission: scheduleTileWarm() is
-//  called (a) right after a mission is picked, for every asset in it, and
-//  (b) at the end of every successful fetchAssets() — including the 5-min
-//  auto-refresh — for whatever assets are currently in scope (subject to
-//  the nearest-50 cap above, recomputed each time). Either call is cheap
-//  even when nothing's new, because everything already warmed gets
-//  filtered out immediately (see warmedAssetKeys below) — so a new
-//  assessment logged by another field user while this device still has
-//  service gets its own area cached automatically, without anyone needing
-//  to reselect the mission or do anything else.
+//  called (a) right after a mission is picked, and (b) at the end of every
+//  successful fetchAssets() — including the 5-min auto-refresh — for
+//  whatever assets are currently in scope. Both are cheap even when
+//  nothing's new, since tile-level dedup (warmedTileKeys) and, in the
+//  per-point fallback, asset-level dedup (warmedAssetKeys) skip anything
+//  already warmed — so a new assessment logged by another field user while
+//  this device still has service gets its own area covered automatically,
+//  without anyone needing to reselect the mission or do anything else.
 //
 //  Kept deliberately gentle in the background so this never makes the app
 //  feel slow or locked up right after loading, while there's still
@@ -2020,8 +2051,7 @@ window.addEventListener('online', () => {
 //
 //  Hybrid (aerial) is the only basemap that gets cached, per the field
 //  team's preference for aerial imagery — Streets (CARTO) tiles are not
-//  cached at all. See app-notes.md "Map tile caching" for the full history,
-//  including the earlier whole-county approach this replaced.
+//  cached at all. See app-notes.md "Map tile caching" for the full history.
 
 function lonLatToTileXY(lon, lat, z) {
   const latRad = lat * Math.PI / 180;
@@ -2035,7 +2065,8 @@ function lonLatToTileXY(lon, lat, z) {
 // needs to pick "which tiles to prefetch," not render an exact boundary.
 // Longitude-degrees-per-mile shrinks with latitude (meridians converge
 // toward the poles), so the longitude delta is corrected by cos(latitude);
-// the latitude delta doesn't need that correction.
+// the latitude delta doesn't need that correction. Used only by the
+// per-point FALLBACK path now — see TILE_WARM_EXTENT_TILE_CAP above.
 function tilesForPointRadius(lat, lng, radiusMiles, z) {
   const dLat = radiusMiles / 69.0; // ~69 miles per degree of latitude, roughly constant
   const cos = Math.cos(lat * Math.PI / 180);
@@ -2050,29 +2081,60 @@ function tilesForPointRadius(lat, lng, radiusMiles, z) {
   }
   return tiles;
 }
+// Tiles covering an L.LatLngBounds rectangle at a given zoom — the
+// whole-extent counterpart to tilesForPointRadius above.
+function tilesForBounds(bounds, z) {
+  const nw = lonLatToTileXY(bounds.getWest(), bounds.getNorth(), z);
+  const se = lonLatToTileXY(bounds.getEast(), bounds.getSouth(), z);
+  const minX = Math.min(nw.x, se.x), maxX = Math.max(nw.x, se.x);
+  const minY = Math.min(nw.y, se.y), maxY = Math.max(nw.y, se.y);
+  const tiles = [];
+  for (let x = minX; x <= maxX; x++) {
+    for (let y = minY; y <= maxY; y++) tiles.push({ x, y, z });
+  }
+  return tiles;
+}
+// Cheap tile-COUNT estimate for a bounds+zoom without building the actual
+// list — used to decide, before doing any real work, whether caching the
+// mission's whole extent at TILE_WARM_ZOOM is affordable (see
+// TILE_WARM_EXTENT_TILE_CAP) without ever materializing a huge array.
+function tileCountEstimate(bounds, z) {
+  const nw = lonLatToTileXY(bounds.getWest(), bounds.getNorth(), z);
+  const se = lonLatToTileXY(bounds.getEast(), bounds.getSouth(), z);
+  return (Math.abs(se.x - nw.x) + 1) * (Math.abs(se.y - nw.y) + 1);
+}
+// The zoom fitBounds()/fitToScopedAssets() would actually land the map at
+// for a given extent, capped the same way that function caps (see
+// FIT_ALL_MAX_ZOOM) — kept in lockstep so whatever gets proactively cached
+// for the "big picture" view always matches what the Fit All button
+// actually shows, rather than drifting out of sync with a separate guess.
+function overviewZoomFor(bounds) {
+  if (!map || !bounds.isValid()) return FIT_ALL_MAX_ZOOM;
+  const raw = map.getBoundsZoom(bounds, false, [40, 40]);
+  return Math.max(3, Math.min(raw, FIT_ALL_MAX_ZOOM));
+}
 
-const POINT_CACHE_RADIUS_MILES = 0.5; // immediate site + surrounding neighborhood, not a whole county
-const TILE_WARM_ZOOM = 16; // the "canonical" zoom — still what selectAsset()/setMapOfflineState() fly to and cap at
-// Zoom levels proactively cached around each site (2026-08-12, was just
-// TILE_WARM_ZOOM alone) — added after a report of the map going blank when
-// selecting an assessment whose marker was still clustered on first load:
-// clusterGroup.zoomToShowLayer() has to zoom in past TILE_WARM_ZOOM to pull
-// a marker out of a tight cluster, landing outside the single-zoom cache.
-// Caching a small range around 16 instead of just 16 covers that case (and
-// a little slack if the map ends up slightly more zoomed out) without
-// trying to cover every possible zoom — tile count roughly quadruples per
-// zoom level higher for the same physical area, so this range (~15-49
-// tiles/layer/site depending on level) already costs several times what a
-// single zoom did; going further (e.g. to 18) would cost several times more
-// again on top of that. If tight clusters needing an even deeper zoom keep
-// causing this in practice, this range is the first thing to widen.
+const TILE_WARM_ZOOM = 16; // default per-assessment zoom — see selectAsset() and setMapOfflineState()
+// Tile-count ceiling for caching a mission's WHOLE extent at TILE_WARM_ZOOM
+// (2026-08-12) — see the safety-valve note above. 600 tiles is roughly a
+// mission whose assessments span up to ~7-8 miles across (varies with
+// latitude and the extent's shape) — comfortably a single town/local damage
+// survey, which is the common case this is meant to optimize for. Wider
+// than that and this falls back to the old per-point approach instead of
+// trying to cache the whole area.
+const TILE_WARM_EXTENT_TILE_CAP = 600;
+// Fallback-path-only constants below (used when a mission's extent exceeds
+// the cap above): a tight radius around just the closest few assessments,
+// across a small zoom range for cluster-reveal slack — the exact design
+// this app used before whole-extent caching existed. See app-notes.md.
+const POINT_CACHE_RADIUS_MILES = 0.5;
 const TILE_WARM_ZOOM_RANGE = [15, 16, 17];
-const TILE_WARM_MAX_ASSETS = 50; // cap below, see scheduleTileWarm()
+const TILE_WARM_MAX_ASSETS = 50;
 const TILE_WARM_CONCURRENCY = 4;
 const TILE_WARM_START_DELAY_MS = 4000; // let foreground map/list/asset traffic get a head start on the connection first
 let tileWarmQueue = Promise.resolve(); // serializes warm batches so overlapping calls don't compete for bandwidth
-const warmedAssetKeys = new Set();     // OBJECTIDs already queued for warming this session
-const warmedTileKeys = new Set();      // "z/x/y" tiles already fetched this session
+const warmedAssetKeys = new Set();     // OBJECTIDs already queued for warming this session (fallback path only)
+const warmedTileKeys = new Set();      // "z/x/y" tiles already fetched this session (both paths)
 // Fills in an Esri tile URL template's {z}/{y}/{x} placeholders for one tile.
 function fillArcgisTileUrl(template, t) {
   return template.replace('{z}', t.z).replace('{y}', t.y).replace('{x}', t.x);
@@ -2106,58 +2168,64 @@ function waitForServiceWorkerReady(timeoutMs) {
 // Entry point: call with any list of assets (a freshly-picked mission's
 // assets, or the current mission scope after any fetchAssets(), including
 // the auto-refresh timer) whenever there's a chance to cache their
-// surroundings. Safe to call repeatedly and with overlapping/duplicate
-// assets — already-warmed ones (by OBJECTID, not the positional `id`,
-// which fetchAssets reassigns by array index on every fetch and isn't
-// stable across fetches) are filtered out here, and the real work is
-// queued rather than run immediately.
-//
-// Capped to the TILE_WARM_MAX_ASSETS (50) closest assessments to the
-// user's current location (2026-08-12) — a mission can span far more sites
-// than that, and now that each one is cached across a range of zoom levels
-// (see TILE_WARM_ZOOM_RANGE above) rather than just one, warming every
-// single assessment in a large/spread-out mission could mean an enormous
-// amount of background fetching and storage. Recomputed on every call
-// (mission pick, and every fetchAssets()/auto-refresh) rather than fixed
-// once — as the user moves or the location fix updates, sites that newly
-// fall into the nearest 50 get queued on their next call, even though a
-// warm already ran earlier for a different set of 50. Without a location
-// fix yet, there's no meaningful "closest" — falls back to just capping at
-// the first 50 in whatever order the list arrived in.
+// surroundings. Safe to call repeatedly — the real work (bounds/zoom math,
+// deciding whole-extent vs. fallback, the actual fetches) happens inside
+// runTileWarm(), queued rather than run immediately, and every path dedups
+// against what's already been warmed, so a call that finds nothing new to
+// do is cheap.
 function scheduleTileWarm(assetList) {
-  if (!('serviceWorker' in navigator)) return;
+  if (!('serviceWorker' in navigator) || !map) return;
   const candidates = (assetList || []).filter(a => a && Number.isFinite(a.lat) && Number.isFinite(a.lng));
-  const prioritized = userLat !== null
-    ? [...candidates].sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity))
-    : candidates;
-  const nearest = prioritized.slice(0, TILE_WARM_MAX_ASSETS);
-  const fresh = nearest.filter(a => {
-    const key = a.objectId ?? a.id;
-    return key !== undefined && key !== null && !warmedAssetKeys.has(key);
-  });
-  if (!fresh.length) return;
-  // Mark warmed immediately (not after the fetches finish) so a fast-
-  // following call — e.g. an auto-refresh landing while the previous warm
-  // is still queued — doesn't re-queue the same assets a second time.
-  fresh.forEach(a => warmedAssetKeys.add(a.objectId ?? a.id));
-  tileWarmQueue = tileWarmQueue.then(() => runTileWarm(fresh)).catch(() => {});
+  if (!candidates.length) return;
+  const bounds = L.latLngBounds(candidates.map(a => [a.lat, a.lng]));
+  if (!bounds.isValid()) return;
+  tileWarmQueue = tileWarmQueue.then(() => runTileWarm(candidates, bounds)).catch(() => {});
 }
-async function runTileWarm(assetList) {
+async function runTileWarm(assetList, bounds) {
   if (typeof navigator.onLine === 'boolean' && !navigator.onLine) return;
   // Give foreground work (initial map tiles, the asset list fetch, any
   // attachment thumbnails) a head start on the connection before this
   // background batch starts competing for bandwidth.
   await new Promise(resolve => setTimeout(resolve, TILE_WARM_START_DELAY_MS));
   if (typeof navigator.onLine === 'boolean' && !navigator.onLine) return; // could've gone offline during the delay
+
   const tileSet = new Map();
-  assetList.forEach(a => {
-    TILE_WARM_ZOOM_RANGE.forEach(z => {
-      tilesForPointRadius(a.lat, a.lng, POINT_CACHE_RADIUS_MILES, z).forEach(t => {
-        const key = `${t.z}/${t.x}/${t.y}`;
-        if (!warmedTileKeys.has(key)) tileSet.set(key, t);
-      });
-    });
+  const addTiles = (list) => list.forEach(t => {
+    const key = `${t.z}/${t.x}/${t.y}`;
+    if (!warmedTileKeys.has(key)) tileSet.set(key, t);
   });
+
+  // Overview zoom: always the WHOLE mission extent. Cheap regardless of how
+  // physically large the mission is — the more zoomed out, the fewer/
+  // bigger tiles cover the same ground — and it's what makes the "Fit all"
+  // big-picture view work offline too, not just the per-assessment one.
+  addTiles(tilesForBounds(bounds, overviewZoomFor(bounds)));
+
+  if (tileCountEstimate(bounds, TILE_WARM_ZOOM) <= TILE_WARM_EXTENT_TILE_CAP) {
+    // Compact mission — cache its ENTIRE extent at the default
+    // per-assessment zoom too. This also closes the gaps between
+    // individual assessments that the old point-radius-only design left
+    // blank when panning between nearby sites.
+    addTiles(tilesForBounds(bounds, TILE_WARM_ZOOM));
+  } else {
+    // Mission spans too much ground to affordably cache the whole extent
+    // at this depth — fall back to a tight radius around just the closest
+    // TILE_WARM_MAX_ASSETS assessments, across TILE_WARM_ZOOM_RANGE for
+    // some cluster-reveal slack (the design this app used before
+    // whole-extent caching existed).
+    const prioritized = userLat !== null
+      ? [...assetList].sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity))
+      : assetList;
+    const fresh = prioritized.slice(0, TILE_WARM_MAX_ASSETS).filter(a => {
+      const key = a.objectId ?? a.id;
+      return key !== undefined && key !== null && !warmedAssetKeys.has(key);
+    });
+    fresh.forEach(a => {
+      warmedAssetKeys.add(a.objectId ?? a.id);
+      TILE_WARM_ZOOM_RANGE.forEach(z => addTiles(tilesForPointRadius(a.lat, a.lng, POINT_CACHE_RADIUS_MILES, z)));
+    });
+  }
+
   const tiles = Array.from(tileSet.values());
   if (!tiles.length) return;
   const ready = await waitForServiceWorkerReady(8000);
@@ -2394,16 +2462,22 @@ function selectAsset(id) {
       clusterGroup.zoomToShowLayer(mk, () => mk.openPopup());
     } else {
       mk.openPopup();
-      // Always land on exactly TILE_WARM_ZOOM (not just "at least" it) so
-      // selecting an assessment consistently lines up with the zoom level
-      // the offline per-assessment cache actually warmed — previously this
-      // used Math.max(map.getZoom(), 14), which could leave the view at whatever
-      // deeper zoom the user had already panned to, landing somewhere the
-      // proactive cache never warmed.
-      map.flyTo([a.lat, a.lng], TILE_WARM_ZOOM, { duration: 0.9 });
+      // Zoom to TILE_WARM_ZOOM (the default), or STAY at the current zoom
+      // if the user had already zoomed in past it — only zoom IN to reach
+      // the default, never back OUT of a closer view they set on purpose
+      // (2026-08-12, per feedback: "if someone zooms in closer, adopt that
+      // zoom, but if zoomed out beyond the default zoom back to that
+      // default"). This briefly used a flat TILE_WARM_ZOOM for every
+      // selection instead (see git history / app-notes), specifically so
+      // it always lined up with what the offline cache had warmed — now
+      // that the cache covers the mission's whole extent at this zoom (see
+      // "OFFLINE MAP TILE CACHING" below), not just a small circle per
+      // site, adopting a deeper zoom the user chose no longer risks
+      // landing somewhere unwarmed nearly as often as it used to.
+      map.flyTo([a.lat, a.lng], Math.max(map.getZoom(), TILE_WARM_ZOOM), { duration: 0.9 });
     }
   } else {
-    map.flyTo([a.lat, a.lng], TILE_WARM_ZOOM, { duration: 0.9 });
+    map.flyTo([a.lat, a.lng], Math.max(map.getZoom(), TILE_WARM_ZOOM), { duration: 0.9 });
   }
   document.querySelectorAll('.asset-card').forEach(c => c.classList.remove('selected'));
   const card = document.getElementById('card-' + a.id);
