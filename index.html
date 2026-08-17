@@ -218,19 +218,6 @@
     display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 16px rgba(0,40,104,0.4);
     transition: transform 0.15s; z-index: 690;
   }
-  /* Stacked directly above #fab-locate (2026-08-12) — lets the user jump
-     back out to "every assessment in this mission" after zooming/panning
-     in on individual sites, rather than only ever seeing that view once at
-     mission load. Same size/style as #fab-locate, just a lighter fill so
-     the two don't visually compete for "primary action" status. */
-  #fab-fit-all {
-    position: absolute; bottom: 70px; right: 12px; width: 48px; height: 48px;
-    background: white; color: var(--tema-blue); border: 1px solid var(--border); border-radius: 50%; cursor: pointer;
-    display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 16px rgba(0,0,0,0.22);
-    transition: transform 0.15s; z-index: 690;
-  }
-  #fab-fit-all:hover { transform: scale(1.08); }
-  #fab-fit-all:active { transform: scale(0.95); }
   #basemap-toggle {
     /* Raised to z-index 690 (2026-08-07) — was 350, which sits ABOVE the
        tile pane (200) and overlay pane (400) but BELOW Leaflet's own
@@ -544,9 +531,6 @@
     <button id="basemap-toggle" type="button" onclick="toggleBasemap()" aria-label="Switch to Streets basemap">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><polygon points="12 2 22 8.5 12 15 2 8.5 12 2"/><polyline points="2 15.5 12 22 22 15.5"/></svg>
       <span class="basemap-label">Streets</span>
-    </button>
-    <button id="fab-fit-all" onclick="fitToScopedAssets()" title="Zoom to fit all assessments" aria-label="Zoom to fit all assessments">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3"/></svg>
     </button>
     <button id="fab-locate" onclick="recenterOnUser()" title="Re-center on my location" aria-label="Re-center on my location">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
@@ -1492,10 +1476,19 @@ function toEpoch(val) {
   const t = d.getTime();
   return isNaN(t) ? null : t;
 }
+// Mission numbers excluded from the mission picker's list of choices
+// (2026-08-13) — "999" is a placeholder/non-real mission number and
+// shouldn't show up as a selectable option. This only affects computeMissions()
+// below, i.e. what appears in the mission picker/pill — it does NOT filter
+// these assessments out of `assets` itself, so they still count toward
+// "All Missions" if that's selected; this just keeps a fake "Mission #999"
+// card from cluttering the picker.
+const EXCLUDED_MISSION_KEYS = new Set(['999']);
 function computeMissions() {
   const map = new Map();
   assets.forEach(a => {
     const key = missionKeyOf(a);
+    if (EXCLUDED_MISSION_KEYS.has(key)) return;
     if (!map.has(key)) map.set(key, { key, missionNum: a.missionNum || '', trainMission: a.trainMission || '', count: 0, latest: null });
     const m = map.get(key);
     m.count++;
@@ -1596,10 +1589,13 @@ function scopedAssets() {
 // bump this if the padding/zoom feel here ever changes.
 const FIT_ALL_MAX_ZOOM = 14;
 // Zooms/pans to fit every currently-scoped assessment on screen at once —
-// runs automatically right after a mission is picked, and is also wired to
-// the map's "Fit all" button (2026-08-12) so the user can jump back out to
-// this big-picture view on demand after panning/zooming in on individual
-// sites, rather than only ever seeing it once at mission load.
+// runs automatically right after a mission is picked. Briefly (2026-08-12)
+// also had an on-map "Fit all" button wired to this for calling it on
+// demand; removed the same day per feedback that it took up too much
+// space on the map — this function is still used for the automatic
+// mission-load fit, and FIT_ALL_MAX_ZOOM still feeds the offline tile
+// cache's "overview zoom" (see "OFFLINE MAP TILE CACHING" below), just
+// with no manual trigger anymore.
 function fitToScopedAssets() {
   if (!map) return;
   const list = scopedAssets();
@@ -2008,8 +2004,10 @@ window.addEventListener('online', () => {
 //  around each individual assessment" to "the WHOLE current mission's
 //  extent, at two zooms": the default per-assessment zoom (TILE_WARM_ZOOM)
 //  and the "fit all assessments" overview zoom (FIT_ALL_MAX_ZOOM-capped,
-//  see fitToScopedAssets() and the new "Fit all" map button). Caching the
-//  actual bounding box instead of separate circles per site also closes
+//  see fitToScopedAssets() — runs automatically on mission load; the
+//  on-map button that once called it on demand was removed for taking up
+//  too much space, see app-notes). Caching the actual bounding box instead
+//  of separate circles per site also closes
 //  the gaps a user would previously hit while panning BETWEEN two nearby
 //  assessments, which the old per-point design left uncached. Both zooms
 //  get fetched via scheduleTileWarm()/runTileWarm() below, one Hybrid
