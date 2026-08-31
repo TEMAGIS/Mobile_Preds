@@ -222,6 +222,15 @@
     padding: 6px 12px; border-radius: 16px; border: 1.5px solid rgba(255,255,255,0.35);
     background: rgba(255,255,255,0.08); color: #fff; font-size: 12px; font-weight: 700;
     font-family: 'DM Sans', sans-serif; cursor: pointer; transition: all 0.15s;
+    /* Unlike .buft's short fixed labels ("Any distance", "100 mi"), a zone
+       pill's text is "<team> – <label>" combined from live data with no
+       length limit — on a narrow phone screen a long one could make the
+       button itself wider than the viewport, since a flex item won't
+       shrink below its content's natural width by default. max-width caps
+       it at the row's own width instead of overflowing past the screen
+       edge, and the text-wrap/break rules let a long pill wrap onto a
+       second line rather than getting clipped or forcing extra width. */
+    max-width: 100%; white-space: normal; overflow-wrap: anywhere; text-align: center;
   }
   .zonet:hover { background: rgba(255,255,255,0.18); }
   .zonet.active { background: #fff; color: var(--tema-blue); border-color: #fff; }
