@@ -216,6 +216,21 @@
     display: flex; align-items: center; justify-content: center; cursor: pointer;
   }
   .filter-drawer-close:hover { background: rgba(255,255,255,0.22); }
+  /* Exports exactly what getFiltered() currently returns — sits after the
+     filter rows (not inside #filter-grid, which buildFilterGrid()
+     regenerates from scratch) since it isn't a filter control itself and
+     doesn't need to survive that rebuild logic. */
+  .download-csv-btn {
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    width: 100%; padding: 10px 14px; margin-top: 18px;
+    background: #fff; color: var(--tema-blue); border: none; border-radius: 10px;
+    font-size: 14px; font-weight: 700; font-family: 'DM Sans', sans-serif;
+    cursor: pointer; transition: opacity 0.15s;
+  }
+  .download-csv-btn:hover { opacity: 0.9; }
+  .download-csv-btn:active { opacity: 0.8; }
+  .download-csv-btn:disabled { opacity: 0.5; cursor: default; }
+  .download-csv-count { opacity: 0.65; font-weight: 700; }
   .fg-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 10px; }
   @media (min-width: 480px) { .fg-row { grid-template-columns: repeat(6, 1fr); } }
   .fgt {
@@ -645,6 +660,11 @@
     </button>
   </div>
   <nav id="filter-grid" aria-label="Filter assessments by damage level and distance"></nav>
+  <button type="button" id="download-csv-btn" class="download-csv-btn" onclick="downloadFilteredCsv()">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M12 3v12m0 0l-4.5-4.5M12 15l4.5-4.5"/><path d="M4 18v1.5A1.5 1.5 0 0 0 5.5 21h13a1.5 1.5 0 0 0 1.5-1.5V18"/></svg>
+    <span>Download CSV</span>
+    <span class="download-csv-count" id="download-csv-count"></span>
+  </button>
 </div>
 <!-- ════════════════════════════════════════════════════════════
      DETAIL SHEET
@@ -1924,6 +1944,102 @@ function assignZonesToAssets() {
   console.info('[Zones] assigned', assets.length, 'asset(s) to zones:', counts);
 }
 // ════════════════════════════════════════════════════════════════
+//  CSV EXPORT — downloads exactly what's currently filtered, added
+//  2026-08-31. Column set/order mirrors the detail sheet's field list
+//  (see kvRow() calls further down) so the export reads the same as
+//  what's already shown per-assessment in the app, rather than
+//  reinventing a separate/smaller field list.
+// ════════════════════════════════════════════════════════════════
+const CSV_COLUMNS = [
+  { header: 'Training / Mission',              get: a => a.trainMission },
+  { header: 'Mission Number',                   get: a => a.missionNum },
+  { header: 'Mission Year',                     get: a => a.year },
+  { header: 'Date & Time of Assessment',        get: a => fmtDateTime(a.assessmentDatetime) },
+  { header: 'Input By',                         get: a => a.subName },
+  { header: 'TEMA Region',                      get: a => a.region },
+  { header: 'Damage Level',                     get: a => a.level ? (DAMAGE_LEVELS[a.level] ? DAMAGE_LEVELS[a.level].label : a.levelRaw) : (a.levelRaw || '') },
+  { header: 'Street Address',                   get: a => a.address },
+  { header: 'Suite/Apt/Unit',                   get: a => a.suiteApt },
+  { header: 'City/Town',                        get: a => a.city },
+  { header: 'State',                            get: a => a.state },
+  { header: 'Zip Code',                         get: a => a.zip },
+  { header: 'County',                           get: a => a.county },
+  { header: 'PDA Area',                         get: a => { const z = zones.find(zz => zz.key === a.zoneKey); return z ? zoneDisplayLabel(z) : ''; } },
+  { header: 'Distance from Me (mi)',            get: a => (a.distance !== null && a.distance !== undefined) ? a.distance.toFixed(1) : '' },
+  { header: 'Type of Dwelling',                 get: a => a.dwellingType },
+  { header: 'Event Type',                       get: a => a.incidentType },
+  { header: 'Off Foundation?',                  get: a => a.foundationOff },
+  { header: 'Damage Description (Destroyed)',   get: a => a.detailsFoundation },
+  { header: 'Owner or Renter',                  get: a => a.ownerRenter },
+  { header: 'Insurance on Structure',           get: a => a.insurance },
+  { header: 'Notes',                            get: a => a.notes },
+  { header: 'Parcel ID',                        get: a => a.parcelId },
+  { header: 'Parcel Address',                   get: a => a.parcelAddress },
+  { header: 'Parcel Appraisal',                 get: a => (a.parcelAppraisal ?? '') },
+  { header: 'Appraisal Date',                   get: a => fmtDateOnly(a.parcelDate) },
+  { header: 'FEMA Flood Zone',                  get: a => a.floodZone },
+  { header: 'Flood Zone Subtype',               get: a => a.floodZoneSubtype },
+  { header: 'DFIRM ID',                         get: a => a.dfirmId },
+  { header: 'Latitude',                         get: a => a.lat },
+  { header: 'Longitude',                        get: a => a.lng },
+];
+// Quotes a field only when it actually needs it (contains a comma, quote,
+// or newline) — doubling any embedded quotes per the CSV spec (RFC 4180)
+// so Excel/Sheets parse addresses, notes, etc. correctly even when they
+// contain stray punctuation.
+function csvEscape(val) {
+  const s = (val === null || val === undefined) ? '' : String(val);
+  return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+function buildCsv(list) {
+  const rows = [CSV_COLUMNS.map(c => csvEscape(c.header)).join(',')];
+  list.forEach(a => rows.push(CSV_COLUMNS.map(c => csvEscape(c.get(a))).join(',')));
+  return rows.join('\r\n');
+}
+// Named after whichever mission is currently active (not just a generic
+// "export.csv") so a user pulling one CSV per mission over time ends up
+// with distinguishable filenames instead of overwriting the same one.
+function csvFilename() {
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+  let missionPart = 'all-missions';
+  if (activeMission !== 'all') {
+    const m = missions.find(mm => mm.key === activeMission);
+    if (m && m.missionNum) missionPart = `mission-${m.missionNum}${m.year ? '-' + m.year : ''}`;
+  }
+  return `pda-assessments_${missionPart}_${stamp}.csv`;
+}
+// Exports exactly what's currently on screen — getFiltered() applies the
+// same level/distance/zone/search filters the list and map already use,
+// so "download the filtered list" means precisely that, not a full
+// unfiltered dump.
+function downloadFilteredCsv() {
+  const list = getFiltered();
+  if (!list.length) { alert('No assessments match the current filters — adjust or clear a filter, then try again.'); return; }
+  const csv = buildCsv(list);
+  // Leading BOM so Excel opens the UTF-8 file with accented characters
+  // intact instead of misreading them as the system codepage.
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = csvFilename();
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+// Keeps the drawer's download button in sync with the current result
+// count — called from renderList() so it stays correct on every filter/
+// search change, not just when the drawer happens to be open.
+function updateDownloadCsvButton() {
+  const btn = document.getElementById('download-csv-btn');
+  const countEl = document.getElementById('download-csv-count');
+  if (!btn || !countEl) return;
+  const n = renderedList.length;
+  countEl.textContent = n ? `(${n})` : '';
+  btn.disabled = n === 0;
+}
+// ════════════════════════════════════════════════════════════════
 //  FILTER GRID — 5 damage levels + "All", plus a distance buffer row
 // ════════════════════════════════════════════════════════════════
 const BUFFER_OPTIONS = [
@@ -2187,6 +2303,7 @@ function getFiltered() {
 function renderList() {
   renderedList = getFiltered();
   document.getElementById('list-count').textContent = `${renderedList.length} assessment${renderedList.length !== 1 ? 's' : ''}`;
+  updateDownloadCsvButton();
   const c = document.getElementById('asset-list');
   if (!renderedList.length) {
     const isFiltering = activeLevels.size > 0 || activeBuffer !== null || activeZone !== null || searchTerm;
