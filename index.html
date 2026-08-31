@@ -180,12 +180,32 @@
   }
   .active-chip-x { font-size: 13px; line-height: 1; opacity: 0.8; margin-left: 1px; }
   #filter-drawer {
-    overflow: hidden; max-height: 0;
-    transition: max-height 0.3s cubic-bezier(0.4,0,0.2,1);
+    position: fixed; inset: 0; z-index: 1900;
     background: var(--tema-blue);
-    padding: 0 16px;
+    overflow-y: auto; -webkit-overflow-scrolling: touch;
+    padding: 16px;
+    padding-top: max(16px, env(safe-area-inset-top));
+    padding-bottom: max(16px, env(safe-area-inset-bottom));
+    /* Slides up from off-screen instead of expanding a max-height — covers
+       the whole viewport once open (2026-08-31, per feedback that the
+       previous fixed-height drawer was clipping the Team Zone row, and
+       that a hard-coded height ceiling doesn't scale if more zones get
+       added later) and scrolls internally if content ever runs past one
+       screen. z-index 1900 sits below the detail sheet (2000) and
+       lightbox (5500) — the app's other full-screen takeovers — but above
+       everything in normal map/list/header use. */
+    transform: translateY(100%);
+    transition: transform 0.3s cubic-bezier(0.4,0,0.2,1);
   }
-  #filter-drawer.open { max-height: 420px; padding: 12px 16px 14px; }
+  #filter-drawer.open { transform: translateY(0); }
+  .filter-drawer-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .filter-drawer-title { font-size: 18px; font-weight: 700; color: #fff; font-family: 'DM Sans', sans-serif; }
+  .filter-drawer-close {
+    background: rgba(255,255,255,0.12); border: none; color: #fff;
+    width: 36px; height: 36px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center; cursor: pointer;
+  }
+  .filter-drawer-close:hover { background: rgba(255,255,255,0.22); }
   .fg-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 10px; }
   @media (min-width: 480px) { .fg-row { grid-template-columns: repeat(6, 1fr); } }
   .fgt {
@@ -579,6 +599,12 @@
       </div>
       <div class="active-filters" id="active-filters" aria-label="Active filters" aria-live="polite"></div>
       <div id="filter-drawer" aria-hidden="true" inert>
+        <div class="filter-drawer-header">
+          <div class="filter-drawer-title">Filters</div>
+          <button type="button" class="filter-drawer-close" onclick="toggleFilterDrawer(true)" aria-label="Close filters">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg>
+          </button>
+        </div>
         <nav id="filter-grid" aria-label="Filter assessments by damage level and distance"></nav>
       </div>
     </div>
@@ -1505,7 +1531,9 @@ function showError(msg) {
 // ════════════════════════════════════════════════════════════════
 let map, userMarker, userLat = null, userLng = null, userLocationStale = false;
 let markers = {}, assets = [];
-let activeFilter = 'all', activeBuffer = null, searchTerm = '', selectedId = null;
+// Damage-level filter is multi-select (2026-08-31, per user request) —
+// activeLevels holds zero or more selected level keys rather than one.
+let activeLevels = new Set(), activeBuffer = null, searchTerm = '', selectedId = null;
 // I-240 team-zone filter (added 2026-08-31) — zones is the fetched-once
 // list of polygons ({key, label, team, geometry}), zonesLoaded flips true
 // once that fetch resolves (buildFilterGrid() re-renders to show the zone
@@ -1823,7 +1851,7 @@ function buildFilterGrid() {
   // my area" action that's worth surfacing first, ahead of damage level
   // and distance.
   document.getElementById('filter-grid').innerHTML = `${zoneSection}
-    <div class="fg-row" role="group" aria-label="Filter by damage level">${allBtn}${others}</div>
+    <div class="fg-row" role="group" aria-label="Filter by damage level, select one or more">${allBtn}${others}</div>
     <div class="buf-label">Distance from me</div>
     <div class="buf-row" role="group" aria-label="Filter by distance from my location">${bufferBtns}</div>`;
 }
@@ -1843,24 +1871,50 @@ function toggleFilterDrawer(forceClose = false) {
     btn.setAttribute('aria-expanded', 'true');
   }
 }
+// "All" is a single deliberate "clear everything, show all levels" action
+// (and the one case that still closes the drawer, matching setBuffer()/
+// setZone() below) — picking or unpicking an individual level does NOT
+// close the drawer, since a multi-select needs to stay open across
+// several taps. The full-screen drawer (added the same day) has its own
+// explicit close button now, so staying open until the user is done
+// picking levels is no longer at odds with getting back out easily.
 function setFilter(el, key) {
-  document.querySelectorAll('.fgt').forEach(c => { c.classList.remove('active'); c.setAttribute('aria-pressed', 'false'); });
-  el.classList.add('active'); el.setAttribute('aria-pressed', 'true');
-  activeFilter = key;
+  if (key === 'all') { clearTypeFilter(); return; }
+  if (activeLevels.has(key)) activeLevels.delete(key);
+  else activeLevels.add(key);
+  syncLevelButtons();
   updateActiveFilterBar();
   renderList();
-  // Drawer closes on selection, same as setBuffer() below (2026-08-12,
-  // reversing the "stays open" change made earlier the same day) — per
-  // follow-up feedback, picking either a damage level or a distance
-  // should close the drawer right away rather than needing an explicit
-  // Filter-button tap afterward.
-  toggleFilterDrawer(true);
+}
+// Re-derives every .fgt pill's active/aria-pressed state from activeLevels
+// (the source of truth) rather than toggling just the clicked element —
+// needed because a chip's × (removeLevelFilter) and the "All" pill can
+// each change activeLevels without a specific .fgt element having been
+// clicked. "All" lights up exactly when nothing specific is selected,
+// so it also re-lights automatically when the last remaining level gets
+// toggled off, instead of leaving every pill unlit.
+function syncLevelButtons() {
+  const noneSelected = activeLevels.size === 0;
+  document.querySelectorAll('.fgt[data-key]').forEach(c => {
+    const key = c.getAttribute('data-key');
+    const on = key === 'all' ? noneSelected : activeLevels.has(key);
+    c.classList.toggle('active', on);
+    c.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
 }
 function clearTypeFilter() {
-  const allBtn = document.querySelector('.fgt[data-key="all"]');
-  document.querySelectorAll('.fgt').forEach(c => { c.classList.remove('active'); c.setAttribute('aria-pressed', 'false'); });
-  if (allBtn) { allBtn.classList.add('active'); allBtn.setAttribute('aria-pressed', 'true'); }
-  activeFilter = 'all';
+  activeLevels.clear();
+  syncLevelButtons();
+  updateActiveFilterBar();
+  renderList();
+  toggleFilterDrawer(true);
+}
+// Removes just one level from the multi-select (used by that level's chip
+// × in the active-filters bar) — distinct from clearTypeFilter(), which
+// clears all of them at once (used by the "All" pill).
+function removeLevelFilter(key) {
+  activeLevels.delete(key);
+  syncLevelButtons();
   updateActiveFilterBar();
   renderList();
 }
@@ -1908,14 +1962,19 @@ function updateActiveFilterBar() {
   const bar = document.getElementById('active-filters');
   const btn = document.getElementById('filter-toggle-btn');
   const chips = [];
-  if (activeFilter !== 'all' && DAMAGE_LEVELS[activeFilter]) chips.push({ kind: 'level', label: DAMAGE_LEVELS[activeFilter].label });
+  // One chip per selected level (multi-select) — each removable
+  // independently via its own ×, unlike the single all-or-nothing chips
+  // for distance/zone below.
+  activeLevels.forEach(key => {
+    if (DAMAGE_LEVELS[key]) chips.push({ kind: 'level', key, label: DAMAGE_LEVELS[key].label });
+  });
   if (activeBuffer !== null) chips.push({ kind: 'buffer', label: `Within ${activeBuffer} mi` });
   if (activeZone !== null) {
     const z = zones.find(zz => zz.key === activeZone);
     if (z) chips.push({ kind: 'zone', label: zoneDisplayLabel(z) });
   }
   bar.innerHTML = chips.map(c =>
-    `<button class="active-chip" type="button" data-clear="${c.kind}" aria-label="Remove filter: ${c.label}">${c.label}<span class="active-chip-x" aria-hidden="true">×</span></button>`
+    `<button class="active-chip" type="button" data-clear="${c.kind}"${c.key ? ` data-key="${c.key}"` : ''} aria-label="Remove filter: ${c.label}">${c.label}<span class="active-chip-x" aria-hidden="true">×</span></button>`
   ).join('');
   if (!bar._bound) {
     bar._bound = true;
@@ -1923,7 +1982,7 @@ function updateActiveFilterBar() {
       const chip = e.target.closest('.active-chip[data-clear]');
       if (!chip) return;
       const kind = chip.getAttribute('data-clear');
-      if (kind === 'level') clearTypeFilter();
+      if (kind === 'level') removeLevelFilter(chip.getAttribute('data-key'));
       else if (kind === 'buffer') clearBufferFilter();
       else if (kind === 'zone') clearZoneFilter();
     });
@@ -1933,7 +1992,7 @@ function updateActiveFilterBar() {
 function onSearch() { searchTerm = document.getElementById('search-input').value.toLowerCase(); renderList(); }
 function getFiltered() {
   let list = scopedAssets().filter(a => {
-    if (activeFilter !== 'all' && a.level !== activeFilter) return false;
+    if (activeLevels.size > 0 && !activeLevels.has(a.level)) return false;
     if (activeBuffer !== null && (a.distance === null || a.distance > activeBuffer)) return false;
     if (activeZone !== null && a.zoneKey !== activeZone) return false;
     if (searchTerm) {
@@ -1959,7 +2018,7 @@ function renderList() {
   document.getElementById('list-count').textContent = `${renderedList.length} assessment${renderedList.length !== 1 ? 's' : ''}`;
   const c = document.getElementById('asset-list');
   if (!renderedList.length) {
-    const isFiltering = activeFilter !== 'all' || activeBuffer !== null || searchTerm;
+    const isFiltering = activeLevels.size > 0 || activeBuffer !== null || searchTerm;
     if (assets.length === 0 || !isFiltering) {
       c.innerHTML = '<div class="empty-state" role="status"><div class="icon" aria-hidden="true">🏚️</div><p>No assessments to display.</p></div>';
     } else {
