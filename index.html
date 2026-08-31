@@ -1815,10 +1815,17 @@ function buildFilterGrid() {
     <div class="buf-label">Team Zone</div>
     <div class="buf-row" role="group" aria-label="Filter by team zone">${zoneNoneBtn}${zoneBtns}</div>`;
   })() : '';
-  document.getElementById('filter-grid').innerHTML = `
+  // Zone row is placed FIRST (2026-08-31, per feedback that it was
+  // getting cut off at the bottom of the drawer's visible area on a
+  // phone) — the drawer has a fixed max-height and doesn't scroll, so
+  // whatever's last in this template is the most likely to end up
+  // partially hidden below the fold. Team zone is a one-tap "show only
+  // my area" action that's worth surfacing first, ahead of damage level
+  // and distance.
+  document.getElementById('filter-grid').innerHTML = `${zoneSection}
     <div class="fg-row" role="group" aria-label="Filter by damage level">${allBtn}${others}</div>
     <div class="buf-label">Distance from me</div>
-    <div class="buf-row" role="group" aria-label="Filter by distance from my location">${bufferBtns}</div>${zoneSection}`;
+    <div class="buf-row" role="group" aria-label="Filter by distance from my location">${bufferBtns}</div>`;
 }
 function toggleFilterDrawer(forceClose = false) {
   const drawer = document.getElementById('filter-drawer');
