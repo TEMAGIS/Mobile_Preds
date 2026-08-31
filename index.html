@@ -198,6 +198,16 @@
     transition: transform 0.3s cubic-bezier(0.4,0,0.2,1);
   }
   #filter-drawer.open { transform: translateY(0); }
+  /* Desktop (matches #app's own 420px/1fr grid breakpoint below): the
+     drawer no longer needs to cover the whole screen since the map is
+     visible in its own column anyway — constrain it to the first
+     (420px) column at full height instead, per feedback that a full-
+     screen takeover felt wrong once there was room beside it. Mobile
+     (below 900px) keeps the full-viewport behavior from inset:0 above,
+     unchanged. */
+  @media (min-width: 900px) {
+    #filter-drawer { right: auto; width: 420px; }
+  }
   .filter-drawer-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
   .filter-drawer-title { font-size: 18px; font-weight: 700; color: #fff; font-family: 'DM Sans', sans-serif; }
   .filter-drawer-close {
@@ -222,6 +232,14 @@
   .fgt-label { font-size: 10px; font-weight: 700; text-align: center; line-height: 1.15; }
   .buf-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: rgba(255,255,255,0.85); margin: 2px 0 6px; }
   .buf-row { display: flex; gap: 6px; flex-wrap: wrap; }
+  /* Team Zone (a .buf-row) now renders immediately before the damage-
+     level grid (.fg-row) — .buf-row itself has no bottom margin (it
+     didn't need one when "Distance from me" was always last), so
+     without this the two rows visually run together on narrow screens.
+     Adjacent-sibling selector only matches that one case; the distance
+     row further down (.buf-label + .buf-row, coming AFTER .fg-row) is
+     unaffected. */
+  .buf-row + .fg-row { margin-top: 14px; }
   .buft {
     padding: 6px 12px; border-radius: 16px; border: 1.5px solid rgba(255,255,255,0.35);
     background: rgba(255,255,255,0.08); color: #fff; font-size: 12px; font-weight: 700;
@@ -1758,10 +1776,16 @@ async function fetchZones() {
         key:      (oid !== undefined && oid !== null) ? String(oid) : `${team}|${label}|${idx}`,
         label:    (label !== undefined && label !== null) ? String(label) : '',
         team:     (team  !== undefined && team  !== null) ? String(team)  : '',
-        geometry: feature.geometry,
+        geometry: normalizeZoneGeometry(feature.geometry),
       };
     }).filter(z => z.label || z.team); // skip any polygon missing both fields entirely — nothing sensible to show on its pill
     zonesLoaded = true;
+    // Diagnostic: the zone filter's whole job is silent point-in-polygon
+    // math with no visible failure mode if it's wrong (pills still render
+    // off `label`/`team` alone) — log what actually came back so a
+    // "the filter didn't work" report can be checked against real data
+    // instead of guessed at. Open DevTools console to see this.
+    console.info('[Zones] loaded', zones.length, 'zone(s):', zones.map(z => ({ key: z.key, label: zoneDisplayLabel(z), geomType: z.geometry && z.geometry.type })));
     assignZonesToAssets();
     buildFilterGrid(); // re-render so the zone row appears now that there's something to show
   } catch (err) {
@@ -1770,6 +1794,23 @@ async function fetchZones() {
     // this specific layer, distinct from the main PDA feature service.
     console.warn('[Zones] could not load I-240 team boundaries:', err);
   }
+}
+// Some ArcGIS Server versions don't fully honor f=geojson for polygon
+// layers and hand back Esri JSON ring geometry ({rings:[...]}) instead of
+// a proper GeoJSON Polygon/MultiPolygon — if that happens silently,
+// pointInGeoJsonGeometry() only checks geometry.type, sees neither
+// 'Polygon' nor 'MultiPolygon', and every point-in-polygon test quietly
+// returns false, i.e. the zone filter would always come back empty with
+// no error anywhere. Normalize that shape here so findZoneForPoint()
+// isn't blind to it. An Esri ring array is coordinate-for-coordinate the
+// same shape our own pointInPolygonRings(lat,lng,rings) already expects
+// (outer ring first, holes after), so it maps straight onto a Polygon's
+// coordinates with no reprojection needed.
+function normalizeZoneGeometry(geometry) {
+  if (!geometry) return null;
+  if (geometry.type === 'Polygon' || geometry.type === 'MultiPolygon') return geometry;
+  if (Array.isArray(geometry.rings)) return { type: 'Polygon', coordinates: geometry.rings };
+  return null;
 }
 function zoneDisplayLabel(z) {
   if (z.team && z.label) return `${z.team} – ${z.label}`;
@@ -1819,6 +1860,14 @@ function findZoneForPoint(lat, lng) {
 }
 function assignZonesToAssets() {
   assets = assets.map(a => ({ ...a, zoneKey: findZoneForPoint(a.lat, a.lng) }));
+  // Diagnostic companion to the "[Zones] loaded" log above — if every
+  // asset comes back unassigned (zoneKey: null) despite zones having
+  // loaded, that's a geometry/coordinate mismatch, not a UI bug; if the
+  // counts look right here but the filter still seems to do nothing,
+  // the bug is downstream of this point instead.
+  const counts = {};
+  assets.forEach(a => { counts[a.zoneKey ?? '(none)'] = (counts[a.zoneKey ?? '(none)'] || 0) + 1; });
+  console.info('[Zones] assigned', assets.length, 'asset(s) to zones:', counts);
 }
 // ════════════════════════════════════════════════════════════════
 //  FILTER GRID — 5 damage levels + "All", plus a distance buffer row
@@ -1851,10 +1900,19 @@ function buildFilterGrid() {
   // buildFilterGrid() again the moment it resolves so this row appears
   // as soon as it can, with no user action needed.
   const zoneSection = zones.length ? (() => {
+    // No inline onclick here (unlike the damage-level/distance rows
+    // above, which use static hardcoded keys) — a zone key is live data
+    // straight from the FeatureServer with no guaranteed character set.
+    // escapeHtml() round-trips fine for a plain HTML attribute, but
+    // stitching it into `onclick="setZone(this, '...')"` means an
+    // apostrophe in that value (a team name, say) would close the JS
+    // string literal early and throw on click, silently breaking the
+    // button. data-zone + the delegated listener below reads the same
+    // attribute without ever treating it as code.
     const zoneNoneBtn = `
-      <button class="zonet ${activeZone === null ? 'active' : ''}" data-zone="" aria-pressed="${activeZone === null ? 'true' : 'false'}" onclick="setZone(this, null)">All zones</button>`;
+      <button class="zonet ${activeZone === null ? 'active' : ''}" data-zone="" aria-pressed="${activeZone === null ? 'true' : 'false'}">All zones</button>`;
     const zoneBtns = zones.map(z => `
-      <button class="zonet ${activeZone === z.key ? 'active' : ''}" data-zone="${escapeHtml(z.key)}" aria-pressed="${activeZone === z.key ? 'true' : 'false'}" onclick="setZone(this, '${escapeHtml(z.key)}')">${escapeHtml(zoneDisplayLabel(z))}</button>`).join('');
+      <button class="zonet ${activeZone === z.key ? 'active' : ''}" data-zone="${escapeHtml(z.key)}" aria-pressed="${activeZone === z.key ? 'true' : 'false'}">${escapeHtml(zoneDisplayLabel(z))}</button>`).join('');
     return `
     <div class="buf-label">Team Zone</div>
     <div class="buf-row" role="group" aria-label="Filter by team zone">${zoneNoneBtn}${zoneBtns}</div>`;
@@ -1866,7 +1924,20 @@ function buildFilterGrid() {
   // partially hidden below the fold. Team zone is a one-tap "show only
   // my area" action that's worth surfacing first, ahead of damage level
   // and distance.
-  document.getElementById('filter-grid').innerHTML = `${zoneSection}
+  const grid = document.getElementById('filter-grid');
+  // Bound once on the persistent parent, not the regenerated children —
+  // survives every innerHTML rebuild below (fetchZones() re-renders this
+  // once zones load, same as syncLevelButtons() etc. do elsewhere).
+  if (!grid._zoneBound) {
+    grid._zoneBound = true;
+    grid.addEventListener('click', (e) => {
+      const btn = e.target.closest('.zonet[data-zone]');
+      if (!btn) return;
+      const zoneKey = btn.getAttribute('data-zone');
+      setZone(btn, zoneKey === '' ? null : zoneKey);
+    });
+  }
+  grid.innerHTML = `${zoneSection}
     <div class="fg-row" role="group" aria-label="Filter by damage level, select one or more">${allBtn}${others}</div>
     <div class="buf-label">Distance from me</div>
     <div class="buf-row" role="group" aria-label="Filter by distance from my location">${bufferBtns}</div>`;
@@ -2034,7 +2105,7 @@ function renderList() {
   document.getElementById('list-count').textContent = `${renderedList.length} assessment${renderedList.length !== 1 ? 's' : ''}`;
   const c = document.getElementById('asset-list');
   if (!renderedList.length) {
-    const isFiltering = activeLevels.size > 0 || activeBuffer !== null || searchTerm;
+    const isFiltering = activeLevels.size > 0 || activeBuffer !== null || activeZone !== null || searchTerm;
     if (assets.length === 0 || !isFiltering) {
       c.innerHTML = '<div class="empty-state" role="status"><div class="icon" aria-hidden="true">🏚️</div><p>No assessments to display.</p></div>';
     } else {
