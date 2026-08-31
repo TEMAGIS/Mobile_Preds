@@ -2004,6 +2004,14 @@ function csvFilename() {
 // same level/distance/zone/search filters the list and map already use,
 // so "download the filtered list" means precisely that, not a full
 // unfiltered dump.
+// True when this app is itself running inside another page's iframe —
+// e.g. dropped into an ArcGIS Experience Builder app via its Embed
+// widget. Wrapped in try/catch because reading window.top can itself
+// throw a cross-origin SecurityError in some embeds, which is its own
+// proof that we're in a cross-origin iframe.
+function isEmbeddedInIframe() {
+  try { return window.self !== window.top; } catch (err) { return true; }
+}
 function downloadFilteredCsv() {
   const list = getFiltered();
   if (!list.length) { alert('No assessments match the current filters — adjust or clear a filter, then try again.'); return; }
@@ -2012,13 +2020,36 @@ function downloadFilteredCsv() {
   // intact instead of misreading them as the system codepage.
   const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = csvFilename();
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  if (isEmbeddedInIframe()) {
+    // Chrome (and others) silently block an <a download> click's actual
+    // file-save step when it originates from a sandboxed iframe lacking
+    // the 'allow-downloads' flag — which is exactly how most page
+    // builders, including ArcGIS Experience Builder's Embed widget,
+    // configure an embedded app by default. There's no JS-visible error
+    // for this, the click just does nothing. Opening the CSV in a new
+    // tab instead is a navigation, not a download, so it only needs
+    // 'allow-popups' — already set on effectively every embed widget,
+    // since those need outbound links to open in a new tab too. The
+    // browser either downloads it automatically from there or shows the
+    // raw CSV text, which the user can still save via the browser's own
+    // Save Page As / Ctrl+S — either way, something reaches them instead
+    // of a silent no-op.
+    const win = window.open(url, '_blank');
+    if (!win) {
+      alert('Your browser blocked the download popup. Please allow popups for this site, or open this app directly in its own browser tab instead of the embedded view, then try again.');
+    }
+    // Held longer than the direct-download path below — the new tab
+    // needs time to actually load the blob URL before it's revoked.
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } else {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = csvFilename();
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
 }
 // Keeps the drawer's download button in sync with the current result
 // count — called from renderList() so it stays correct on every filter/
@@ -2225,8 +2256,8 @@ function setZone(el, zoneKey) {
   updateActiveFilterBar();
   renderList();
   refreshMarkers();
-  // Closes on selection, matching setFilter()/setBuffer() above.
-  toggleFilterDrawer(true);
+  // Deliberately does NOT close the drawer (2026-08-31, per feedback) —
+  // unlike setFilter()/setBuffer() above, which still close on selection.
 }
 function clearZoneFilter() {
   document.querySelectorAll('.zonet[data-zone]').forEach(c => { c.classList.remove('active'); c.setAttribute('aria-pressed', 'false'); });
