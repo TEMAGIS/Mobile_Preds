@@ -612,6 +612,18 @@ const CONFIG = {
   refreshBufferMs: 5 * 60 * 1000,
   // Auto-refresh of the assessment list (set to 0 to disable).
   refreshInterval: 5 * 60 * 1000,
+  // Auto-refresh of the user's own GPS position (set to 0 to disable).
+  // Added 2026-08-31 after field feedback that location wasn't updating
+  // for someone moving in a vehicle — the app previously only ever took
+  // a single fix (on load, or when "Locate" was tapped), so a driver's
+  // map dot and distance-sorted list just froze at wherever they were
+  // when that one fix happened. 30s re-polls the GPS periodically instead
+  // of holding a continuous watchPosition() lock open the whole time —
+  // roughly the same "stays current enough" result for a car moving
+  // between sites, at meaningfully lower battery cost than a continuous
+  // watch (see requestLocation()'s `silent` option below for why this is
+  // safe to run unattended).
+  locationRefreshInterval: 30 * 1000,
   // Storage keys — versioned/renamed from the old CIKR viewer's keys so a
   // browser that previously cached Critical2TN data doesn't try to read it
   // back in as if it were damage-assessment records.
@@ -1005,6 +1017,7 @@ function confirmLogout() {
   if (!confirm('Sign out and clear the cached session?')) return;
   clearStoredToken();
   if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+  if (locationRefreshTimer) { clearInterval(locationRefreshTimer); locationRefreshTimer = null; }
   showLogin();
 }
 // Handle the OAuth redirect callback. Returns true if we consumed a
@@ -1454,6 +1467,7 @@ let markers = {}, assets = [];
 let activeFilter = 'all', activeBuffer = null, searchTerm = '', selectedId = null;
 let renderedList = [];
 let refreshTimer = null;
+let locationRefreshTimer = null;
 function getAsset(id) { return assets.find(a => String(a.id) === String(id)); }
 // ════════════════════════════════════════════════════════════════
 //  MISSIONS — assessments are grouped into deployments/missions via
@@ -2484,15 +2498,24 @@ function selectAsset(id) {
 // ════════════════════════════════════════════════════════════════
 //  GEOLOCATION
 // ════════════════════════════════════════════════════════════════
-function requestLocation() {
-  if (!navigator.geolocation) { useLastKnownLocation(); return; }
-  document.getElementById('loc-label').textContent = '…';
+// `opts.silent` is set by the periodic auto-refresh (see CONFIG.
+// locationRefreshInterval / startApp() below) so a background retry can't
+// pop a JS alert() or reset the header label every 30 seconds — e.g. if
+// permission was declined, or a car is passing through a dead zone. A
+// manual tap (the "Locate" pill, or recenterOnUser()'s own fallback) is
+// never silent, so the user still gets normal feedback for something they
+// explicitly asked for.
+function requestLocation(opts = {}) {
+  const silent = !!opts.silent;
+  if (!navigator.geolocation) { if (!silent) useLastKnownLocation(); return; }
+  if (!silent) document.getElementById('loc-label').textContent = '…';
   navigator.geolocation.getCurrentPosition(onLocationSuccess, () => {
     // No fresh fix — airplane mode, GPS still resolving indoors, or the
     // user declined the permission prompt. Rather than dropping location/
     // distance entirely, fall back to wherever we last had a fix (see
-    // useLastKnownLocation()). Only alert if we truly have nothing at all.
-    if (!useLastKnownLocation()) {
+    // useLastKnownLocation()). Only alert if we truly have nothing at all,
+    // and never on a silent (background) retry.
+    if (!useLastKnownLocation() && !silent) {
       document.getElementById('loc-label').textContent = 'Locate';
       // A distance filter can't do anything without a fix — drop back to
       // "Any distance" rather than silently showing zero results.
@@ -2818,6 +2841,13 @@ async function startApp() {
   if (CONFIG.refreshInterval > 0) {
     if (refreshTimer) clearInterval(refreshTimer);
     refreshTimer = setInterval(fetchAssets, CONFIG.refreshInterval);
+  }
+  // Keeps the user's position current for someone moving between sites —
+  // see the CONFIG.locationRefreshInterval comment above for why this is
+  // a periodic silent re-poll rather than a continuous watchPosition().
+  if (CONFIG.locationRefreshInterval > 0) {
+    if (locationRefreshTimer) clearInterval(locationRefreshTimer);
+    locationRefreshTimer = setInterval(() => requestLocation({ silent: true }), CONFIG.locationRefreshInterval);
   }
 }
 document.addEventListener('DOMContentLoaded', async () => {
