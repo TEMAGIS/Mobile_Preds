@@ -1972,6 +1972,7 @@ function setFilter(el, key) {
   syncLevelButtons();
   updateActiveFilterBar();
   renderList();
+  refreshMarkers();
 }
 // Re-derives every .fgt pill's active/aria-pressed state from activeLevels
 // (the source of truth) rather than toggling just the clicked element —
@@ -1994,6 +1995,7 @@ function clearTypeFilter() {
   syncLevelButtons();
   updateActiveFilterBar();
   renderList();
+  refreshMarkers();
   toggleFilterDrawer(true);
 }
 // Removes just one level from the multi-select (used by that level's chip
@@ -2004,6 +2006,7 @@ function removeLevelFilter(key) {
   syncLevelButtons();
   updateActiveFilterBar();
   renderList();
+  refreshMarkers();
 }
 function setBuffer(el, miles) {
   document.querySelectorAll('.buft').forEach(c => { c.classList.remove('active'); c.setAttribute('aria-pressed', 'false'); });
@@ -2016,6 +2019,7 @@ function setBuffer(el, miles) {
     requestLocation();
   } else {
     renderList();
+    refreshMarkers();
   }
   // Closes on selection, matching setFilter() above (2026-08-12).
   toggleFilterDrawer(true);
@@ -2027,6 +2031,7 @@ function clearBufferFilter() {
   activeBuffer = null;
   updateActiveFilterBar();
   renderList();
+  refreshMarkers();
 }
 function setZone(el, zoneKey) {
   document.querySelectorAll('.zonet[data-zone]').forEach(c => { c.classList.remove('active'); c.setAttribute('aria-pressed', 'false'); });
@@ -2034,6 +2039,7 @@ function setZone(el, zoneKey) {
   activeZone = zoneKey;
   updateActiveFilterBar();
   renderList();
+  refreshMarkers();
   // Closes on selection, matching setFilter()/setBuffer() above.
   toggleFilterDrawer(true);
 }
@@ -2044,6 +2050,7 @@ function clearZoneFilter() {
   activeZone = null;
   updateActiveFilterBar();
   renderList();
+  refreshMarkers();
 }
 function updateActiveFilterBar() {
   const bar = document.getElementById('active-filters');
@@ -2740,12 +2747,22 @@ async function loadPopupAttachments(a, marker) {
   if (!marker.isPopupOpen()) return; // user moved on — don't fight the current popup
   marker.setPopupContent(buildPopupHtml(a));
 }
+// Renders exactly what's currently filtered (level/distance/zone/search),
+// not just the mission-scoped set — until 2026-08-31 this used
+// scopedAssets() directly, so picking a damage level, a distance buffer,
+// or a team zone visibly narrowed the list but left every pin on the map
+// untouched (confirmed by user report: "team zone filter did not appear
+// to work... it appears to be working on the list" — the list already
+// read from getFiltered(), the map never did). fitToScopedAssets() and
+// the tile-cache warmer intentionally keep using the broader
+// scopedAssets() — those are about the whole mission, not the active
+// filter selection.
 function refreshMarkers() {
   if (!clusterGroup) return;
   clusterGroup.clearLayers();
   markers = {};
   const layers = [];
-  scopedAssets().forEach(a => {
+  getFiltered().forEach(a => {
     const mk = L.marker([a.lat, a.lng], { icon: makeIcon(a) })
       .bindPopup(buildPopupHtml(a), {
         closeButton: false,
@@ -2894,6 +2911,10 @@ function onLocationSuccess(pos, opts = {}) {
   // does throw for some environment-specific reason.
   assets = assets.map(a => ({ ...a, distance: haversine(userLat, userLng, a.lat, a.lng) }));
   renderList();
+  // Only worth rebuilding the map's markers here if a distance filter is
+  // actually active — otherwise which assets are on the map never
+  // depends on distance, and this runs on every silent 30s GPS refresh.
+  if (activeBuffer !== null) refreshMarkers();
   try {
     if (userMarker) map.removeLayer(userMarker);
     userMarker = L.marker([userLat, userLng], {
@@ -2923,6 +2944,9 @@ function useLastKnownLocation() {
   // try/catch so it can't take the list update down with it if it throws.
   assets = assets.map(a => ({ ...a, distance: haversine(userLat, userLng, a.lat, a.lng) }));
   renderList();
+  // Same reasoning as onLocationSuccess() above — only matters on the map
+  // when a distance filter is active.
+  if (activeBuffer !== null) refreshMarkers();
   try {
     if (userMarker) map.removeLayer(userMarker);
     userMarker = L.marker([userLat, userLng], {
