@@ -232,14 +232,15 @@
   .fgt-label { font-size: 10px; font-weight: 700; text-align: center; line-height: 1.15; }
   .buf-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: rgba(255,255,255,0.85); margin: 2px 0 6px; }
   .buf-row { display: flex; gap: 6px; flex-wrap: wrap; }
-  /* Team Zone (a .buf-row) now renders immediately before the damage-
-     level grid (.fg-row) — .buf-row itself has no bottom margin (it
-     didn't need one when "Distance from me" was always last), so
-     without this the two rows visually run together on narrow screens.
-     Adjacent-sibling selector only matches that one case; the distance
-     row further down (.buf-label + .buf-row, coming AFTER .fg-row) is
-     unaffected. */
-  .buf-row + .fg-row { margin-top: 14px; }
+  /* Team Zone (a .buf-row) now renders immediately before the "Damage
+     Level" label — .buf-row itself has no bottom margin (it didn't need
+     one when "Distance from me" was always last), and .buf-label's own
+     2px top margin isn't enough breathing room after a row of wrapped
+     zone pills, so the two visually ran together on narrow screens. The
+     "Distance from me" label further down isn't preceded by a .buf-row
+     (it follows .fg-row instead), so this selector only ever matches the
+     Team Zone → Damage Level handoff. */
+  .buf-row + .buf-label { margin-top: 14px; }
   .buft {
     padding: 6px 12px; border-radius: 16px; border: 1.5px solid rgba(255,255,255,0.35);
     background: rgba(255,255,255,0.08); color: #fff; font-size: 12px; font-weight: 700;
@@ -732,6 +733,7 @@ const FIELDS = {
   level:              'assessment_level',
   trainMission:       'train_mission',
   missionNum:         'mission_num',
+  year:               'year_only', // disambiguates mission_num across different years' responses (2026-08-31, see missionKeyOf())
   assessmentDatetime: 'assessment_datetime',
   subName:            'sub_name',
   dwellingType:       'dwelling_type',
@@ -1204,6 +1206,7 @@ function featureToAsset(feature) {
     level:              levelKey,
     trainMission:       p[FIELDS.trainMission]        || '',
     missionNum:         p[FIELDS.missionNum]          || '',
+    year:               p[FIELDS.year]                 || '',
     assessmentDatetime: p[FIELDS.assessmentDatetime]  ?? null,
     subName:            p[FIELDS.subName]             || '',
     dwellingType:       p[FIELDS.dwellingType]        || '',
@@ -1589,9 +1592,20 @@ function getAsset(id) { return assets.find(a => String(a.id) === String(id)); }
 let missions = [];
 let activeMission = 'all';
 let missionInitialized = false;
+// Mission identity is (year_only, mission_num) together, not mission_num
+// alone — mission numbers can repeat across different years' responses
+// (confirmed 2026-08-31, once year_only was pointed out on the
+// assessment data specifically to disambiguate this). Keying on
+// mission_num by itself would silently merge two unrelated missions from
+// different years into one "mission" everywhere downstream: the picker,
+// scopedAssets(), and now mission-scoped zone matching too. A record
+// with no year (older data, before this mattered) still keys on
+// mission_num alone rather than being forced apart from its peers.
 function missionKeyOf(a) {
-  const v = a.missionNum && String(a.missionNum).trim();
-  return v || '__unknown__';
+  const num = a.missionNum && String(a.missionNum).trim();
+  if (!num) return '__unknown__';
+  const yr = (a.year !== undefined && a.year !== null && String(a.year).trim() !== '') ? String(a.year).trim() : '';
+  return yr ? `${yr}|${num}` : num;
 }
 function toEpoch(val) {
   if (isBlank(val)) return null;
@@ -1605,14 +1619,16 @@ function toEpoch(val) {
 // below, i.e. what appears in the mission picker/pill — it does NOT filter
 // these assessments out of `assets` itself, so they still count toward
 // "All Missions" if that's selected; this just keeps a fake "Mission #999"
-// card from cluttering the picker.
+// card from cluttering the picker. Checked against the raw mission_num
+// (not missionKeyOf()'s composite key), since "999" is a placeholder
+// regardless of which year it shows up under.
 const EXCLUDED_MISSION_KEYS = new Set(['999']);
 function computeMissions() {
   const map = new Map();
   assets.forEach(a => {
+    if (EXCLUDED_MISSION_KEYS.has(String(a.missionNum || '').trim())) return;
     const key = missionKeyOf(a);
-    if (EXCLUDED_MISSION_KEYS.has(key)) return;
-    if (!map.has(key)) map.set(key, { key, missionNum: a.missionNum || '', trainMission: a.trainMission || '', count: 0, latest: null });
+    if (!map.has(key)) map.set(key, { key, missionNum: a.missionNum || '', year: a.year || '', trainMission: a.trainMission || '', count: 0, latest: null });
     const m = map.get(key);
     m.count++;
     const t = toEpoch(a.assessmentDatetime);
@@ -1635,7 +1651,7 @@ function computeMissions() {
 // and an assessment-count line.
 function missionDisplay(m) {
   const name = m.missionNum
-    ? `Mission #${m.missionNum}`
+    ? (m.year ? `Mission #${m.missionNum} (${m.year})` : `Mission #${m.missionNum}`)
     : (m.key === '__unknown__' ? 'Unassigned' : `Mission #${m.key}`);
   const lastEntry = m.latest !== null
     ? `Last entry: ${new Date(m.latest).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: '2-digit' })}`
@@ -1692,6 +1708,14 @@ function updateMissionPillLabel() {
 // header pill to switch missions.
 function selectMissionFromScreen(key) {
   activeMission = key;
+  // A PDA Area pill is scoped to one mission (see zoneAppliesToMission())
+  // — a zone key selected under the previous mission may not even exist
+  // for this one, which would otherwise silently filter every asset out
+  // instead of showing anything. Damage-level/distance filters aren't
+  // mission-specific, so those deliberately carry over.
+  activeZone = null;
+  buildFilterGrid(); // re-scope the PDA Area pills to the newly active mission
+  updateActiveFilterBar();
   hideMissionScreen();
   revealApp();
   updateMissionPillLabel();
@@ -1756,6 +1780,12 @@ const ZONE_LAYER = {
   url:           'https://services1.arcgis.com/kILp9lqGUeOhnDbI/arcgis/rest/services/I-240_Boundary/FeatureServer/0',
   labelField:    'label',
   teamField:     'team',
+  // Added 2026-08-31 so a zone polygon can declare which mission it
+  // belongs to, now that the layer holds boundaries across more than one
+  // response over time — see zoneAppliesToMission() below for how these
+  // are actually used.
+  missionYearField:   'mission_year',
+  missionNumberField: 'mission_number',
   tokenRequired: true, // confirmed token-secured (same org as the PDA feature service) — could not introspect the exact field casing beyond what the user described, hence resolveField()'s case-insensitive lookup below
 };
 // Fetched once and cached in memory for the session — these are a
@@ -1772,10 +1802,16 @@ async function fetchZones() {
       const label = resolveField(props, ZONE_LAYER.labelField);
       const team  = resolveField(props, ZONE_LAYER.teamField);
       const oid   = resolveField(props, 'OBJECTID');
+      const yearRaw   = resolveField(props, ZONE_LAYER.missionYearField);
+      const numRaw    = resolveField(props, ZONE_LAYER.missionNumberField);
+      const missionYear   = (yearRaw !== undefined && yearRaw !== null && yearRaw !== '') ? Number(yearRaw) : null;
+      const missionNumber = (numRaw  !== undefined && numRaw  !== null && numRaw  !== '') ? Number(numRaw)  : null;
       return {
         key:      (oid !== undefined && oid !== null) ? String(oid) : `${team}|${label}|${idx}`,
         label:    (label !== undefined && label !== null) ? String(label) : '',
         team:     (team  !== undefined && team  !== null) ? String(team)  : '',
+        missionYear:   Number.isFinite(missionYear)   ? missionYear   : null,
+        missionNumber: Number.isFinite(missionNumber) ? missionNumber : null,
         geometry: normalizeZoneGeometry(feature.geometry),
       };
     }).filter(z => z.label || z.team); // skip any polygon missing both fields entirely — nothing sensible to show on its pill
@@ -1785,7 +1821,7 @@ async function fetchZones() {
     // off `label`/`team` alone) — log what actually came back so a
     // "the filter didn't work" report can be checked against real data
     // instead of guessed at. Open DevTools console to see this.
-    console.info('[Zones] loaded', zones.length, 'zone(s):', zones.map(z => ({ key: z.key, label: zoneDisplayLabel(z), geomType: z.geometry && z.geometry.type })));
+    console.info('[Zones] loaded', zones.length, 'zone(s):', zones.map(z => ({ key: z.key, label: zoneDisplayLabel(z), missionYear: z.missionYear, missionNumber: z.missionNumber, geomType: z.geometry && z.geometry.type })));
     assignZonesToAssets();
     buildFilterGrid(); // re-render so the zone row appears now that there's something to show
   } catch (err) {
@@ -1815,6 +1851,23 @@ function normalizeZoneGeometry(geometry) {
 function zoneDisplayLabel(z) {
   if (z.team && z.label) return `${z.team} – ${z.label}`;
   return z.team || z.label || 'Zone';
+}
+// Lets a zone declare which mission it belongs to (mission_year +
+// mission_number, added 2026-08-31) now that this layer can hold
+// boundaries for more than one response over time — without this, a zone
+// drawn for one mission would keep matching points from an unrelated
+// later mission just because its polygon happens to cover the same
+// geography, or (once mission_num turned out to repeat across different
+// years' responses) even match the wrong year's mission entirely.
+// Each field is checked independently, and a zone that hasn't set a
+// given field is treated as unconstrained on it — so a zone missing
+// mission_year (partial backfill) still matches on mission_number alone
+// instead of silently matching nothing, and existing zones from before
+// either field existed keep applying to every mission as before.
+function zoneAppliesToMission(z, missionNum, missionYear) {
+  if (z.missionNumber !== null && z.missionNumber !== undefined && String(z.missionNumber) !== String(missionNum || '')) return false;
+  if (z.missionYear !== null && z.missionYear !== undefined && String(z.missionYear) !== String(missionYear || '')) return false;
+  return true;
 }
 // Point-in-polygon spatial join — ported as-is from the district-boundary
 // fork (Preds Summary), which unit-tested this against known square/hole/
@@ -1852,14 +1905,15 @@ function pointInGeoJsonGeometry(lat, lng, geometry) {
 // polygons (each team's area is its own boundary), but if it ever does,
 // this just means whichever zone happens to be listed first in the fetch
 // order is the one an overlapping point counts as.
-function findZoneForPoint(lat, lng) {
+function findZoneForPoint(lat, lng, missionNum, missionYear) {
   for (const z of zones) {
+    if (!zoneAppliesToMission(z, missionNum, missionYear)) continue; // wrong mission's boundary — geography can still overlap, mission must match too
     if (pointInGeoJsonGeometry(lat, lng, z.geometry)) return z.key;
   }
   return null;
 }
 function assignZonesToAssets() {
-  assets = assets.map(a => ({ ...a, zoneKey: findZoneForPoint(a.lat, a.lng) }));
+  assets = assets.map(a => ({ ...a, zoneKey: findZoneForPoint(a.lat, a.lng, a.missionNum, a.year) }));
   // Diagnostic companion to the "[Zones] loaded" log above — if every
   // asset comes back unassigned (zoneKey: null) despite zones having
   // loaded, that's a geometry/coordinate mismatch, not a UI bug; if the
@@ -1880,26 +1934,48 @@ const BUFFER_OPTIONS = [
   { miles: 10,   label: '10 mi' },
 ];
 function buildFilterGrid() {
+  // Reflects the actual current selection (activeLevels/activeBuffer),
+  // not just what made sense the first time this ran — needed because
+  // buildFilterGrid() is no longer only ever called once at boot with
+  // everything at its default: fetchZones() re-renders this once zones
+  // load, and selectMissionFromScreen() now does too (so the zone row
+  // below can re-scope to whichever mission is newly active), and either
+  // of those could happen after the user already picked a level/distance
+  // filter. Hardcoding "All"/"" as the only active pill here would silently
+  // desync the visible highlight from the real filter state in that case.
   const allBtn = `
-    <button class="fgt active" data-key="all" aria-pressed="true" onclick="setFilter(this,'all')">
+    <button class="fgt ${activeLevels.size === 0 ? 'active' : ''}" data-key="all" aria-pressed="${activeLevels.size === 0 ? 'true' : 'false'}" onclick="setFilter(this,'all')">
       <div class="fgt-icon" aria-hidden="true"><svg viewBox="0 0 26 26" width="26" height="26" aria-hidden="true"><circle cx="13" cy="13" r="12" fill="#002868"/><circle cx="13" cy="13" r="6" fill="#fff"/></svg></div>
       <div class="fgt-label">All</div>
     </button>`;
   const others = Object.entries(DAMAGE_LEVELS).map(([key, lvl]) => `
-    <button class="fgt" data-key="${key}" aria-pressed="false" onclick="setFilter(this,'${key}')" aria-label="Filter: ${lvl.label}">
+    <button class="fgt ${activeLevels.has(key) ? 'active' : ''}" data-key="${key}" aria-pressed="${activeLevels.has(key) ? 'true' : 'false'}" onclick="setFilter(this,'${key}')" aria-label="Filter: ${lvl.label}">
       <div class="fgt-icon" aria-hidden="true">${iconHTML(key, 26)}</div>
       <div class="fgt-label">${lvl.label}</div>
     </button>`).join('');
   const bufferBtns = BUFFER_OPTIONS.map(o => `
-    <button class="buft ${o.miles === null ? 'active' : ''}" data-miles="${o.miles === null ? '' : o.miles}"
-      aria-pressed="${o.miles === null ? 'true' : 'false'}" onclick="setBuffer(this, ${o.miles === null ? 'null' : o.miles})">${o.label}</button>`).join('');
+    <button class="buft ${activeBuffer === o.miles ? 'active' : ''}" data-miles="${o.miles === null ? '' : o.miles}"
+      aria-pressed="${activeBuffer === o.miles ? 'true' : 'false'}" onclick="setBuffer(this, ${o.miles === null ? 'null' : o.miles})">${o.label}</button>`).join('');
+  // Zones now carry mission_year + mission_number (added 2026-08-31, see
+  // zoneAppliesToMission()) since the layer can hold boundaries for more
+  // than one response over time — only show pills for zones relevant to
+  // whichever mission is currently selected, so a PDA Area from an
+  // unrelated past mission can't end up selected and silently zero out
+  // the list for the mission actually being viewed. Under "All Missions"
+  // (or if the active mission somehow isn't in `missions` yet) every zone
+  // is shown, since assets from any mission may be present and each one
+  // is already matched only against its own mission's zones.
+  const activeInfo = (activeMission !== 'all') ? missions.find(m => m.key === activeMission) : null;
+  const relevantZones = activeInfo
+    ? zones.filter(z => zoneAppliesToMission(z, activeInfo.missionNum, activeInfo.year))
+    : zones;
   // Zone row only renders once the (fetched-once, async) I-240 layer has
-  // actually loaded and has at least one usable polygon — omitted
-  // entirely until then rather than showing an empty/loading row, since
-  // there's nothing meaningful to pick yet. fetchZones() calls
+  // actually loaded and has at least one polygon relevant to this mission
+  // — omitted entirely until then rather than showing an empty/loading
+  // row, since there's nothing meaningful to pick yet. fetchZones() calls
   // buildFilterGrid() again the moment it resolves so this row appears
   // as soon as it can, with no user action needed.
-  const zoneSection = zones.length ? (() => {
+  const zoneSection = relevantZones.length ? (() => {
     // No inline onclick here (unlike the damage-level/distance rows
     // above, which use static hardcoded keys) — a zone key is live data
     // straight from the FeatureServer with no guaranteed character set.
@@ -1911,17 +1987,17 @@ function buildFilterGrid() {
     // attribute without ever treating it as code.
     const zoneNoneBtn = `
       <button class="zonet ${activeZone === null ? 'active' : ''}" data-zone="" aria-pressed="${activeZone === null ? 'true' : 'false'}">All zones</button>`;
-    const zoneBtns = zones.map(z => `
+    const zoneBtns = relevantZones.map(z => `
       <button class="zonet ${activeZone === z.key ? 'active' : ''}" data-zone="${escapeHtml(z.key)}" aria-pressed="${activeZone === z.key ? 'true' : 'false'}">${escapeHtml(zoneDisplayLabel(z))}</button>`).join('');
     return `
-    <div class="buf-label">Team Zone</div>
-    <div class="buf-row" role="group" aria-label="Filter by team zone">${zoneNoneBtn}${zoneBtns}</div>`;
+    <div class="buf-label">PDA Area</div>
+    <div class="buf-row" role="group" aria-label="Filter by PDA area">${zoneNoneBtn}${zoneBtns}</div>`;
   })() : '';
   // Zone row is placed FIRST (2026-08-31, per feedback that it was
   // getting cut off at the bottom of the drawer's visible area on a
   // phone) — the drawer has a fixed max-height and doesn't scroll, so
   // whatever's last in this template is the most likely to end up
-  // partially hidden below the fold. Team zone is a one-tap "show only
+  // partially hidden below the fold. PDA Area is a one-tap "show only
   // my area" action that's worth surfacing first, ahead of damage level
   // and distance.
   const grid = document.getElementById('filter-grid');
@@ -1938,6 +2014,7 @@ function buildFilterGrid() {
     });
   }
   grid.innerHTML = `${zoneSection}
+    <div class="buf-label">Damage Level</div>
     <div class="fg-row" role="group" aria-label="Filter by damage level, select one or more">${allBtn}${others}</div>
     <div class="buf-label">Distance from me</div>
     <div class="buf-row" role="group" aria-label="Filter by distance from my location">${bufferBtns}</div>`;
