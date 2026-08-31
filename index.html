@@ -209,6 +209,22 @@
   }
   .buft:hover { background: rgba(255,255,255,0.18); }
   .buft.active { background: #fff; color: var(--tema-blue); border-color: #fff; }
+  /* .zonet (I-240 team-zone pills, added 2026-08-31) shares .buft's exact
+     look but is kept as its own class, not a style alias — same reasoning
+     already applied to distance vs. damage-level pills: setBuffer()/
+     clearBufferFilter() select `.buft` globally to reset the distance
+     row's active state, and if the zone pills used that same class,
+     picking a distance filter would incidentally wipe the visual "active"
+     state off whichever zone pill was selected (the zone filter itself —
+     activeZone — would stay correct, only the pill's highlight would
+     desync). */
+  .zonet {
+    padding: 6px 12px; border-radius: 16px; border: 1.5px solid rgba(255,255,255,0.35);
+    background: rgba(255,255,255,0.08); color: #fff; font-size: 12px; font-weight: 700;
+    font-family: 'DM Sans', sans-serif; cursor: pointer; transition: all 0.15s;
+  }
+  .zonet:hover { background: rgba(255,255,255,0.18); }
+  .zonet.active { background: #fff; color: var(--tema-blue); border-color: #fff; }
   /* ── Map ─────────────────────────────────────────────────── */
   #map-container { flex-shrink: 0; height: 36vh; position: relative; }
   #map { width: 100%; height: 100%; }
@@ -1092,6 +1108,15 @@ function resolveObjectId(p) {
   const key = Object.keys(p).find(k => /^objectid$/i.test(k));
   return key ? p[key] : undefined;
 }
+// Same case-insensitive-fallback reasoning as resolveObjectId() above,
+// generalized to any field name — used for the I-240 zone layer's label/
+// team fields since that service is token-secured and couldn't be
+// introspected directly from the build sandbox to confirm exact casing.
+function resolveField(props, name) {
+  if (props[name] !== undefined) return props[name];
+  const key = Object.keys(props).find(k => k.toLowerCase() === name.toLowerCase());
+  return key ? props[key] : undefined;
+}
 function featureToAsset(feature) {
   const p   = feature.attributes;
   const lat = feature.geometry ? feature.geometry.y : null;
@@ -1219,6 +1244,12 @@ async function fetchAssets() {
       id: `a${idx}`,
       distance: (userLat !== null) ? haversine(userLat, userLng, a.lat, a.lng) : null,
     }));
+    // Re-derive each asset's I-240 team zone on every fetch (mission data
+    // is rebuilt from scratch here, so any zoneKey from a previous fetch
+    // wouldn't survive otherwise) — cheap even on a full refresh, since
+    // it's a handful of zone polygons per point, not hundreds/thousands
+    // like the census-tract case in the district-boundary fork.
+    if (zonesLoaded) assignZonesToAssets();
     setLoadingState(false);
     setOfflineBanner(false);
     cacheData(assets);
@@ -1248,6 +1279,7 @@ async function fetchAssets() {
           ...a,
           distance: (userLat !== null) ? haversine(userLat, userLng, a.lat, a.lng) : a.distance,
         }));
+      if (zonesLoaded) assignZonesToAssets();
       applyMissionsAndRender(true, cached.ts);
       setOfflineBanner(true);
     } else {
@@ -1465,6 +1497,12 @@ function showError(msg) {
 let map, userMarker, userLat = null, userLng = null, userLocationStale = false;
 let markers = {}, assets = [];
 let activeFilter = 'all', activeBuffer = null, searchTerm = '', selectedId = null;
+// I-240 team-zone filter (added 2026-08-31) — zones is the fetched-once
+// list of polygons ({key, label, team, geometry}), zonesLoaded flips true
+// once that fetch resolves (buildFilterGrid() re-renders to show the zone
+// row only once there's something to show), activeZone is the currently
+// selected zone's key or null for "All zones."
+let zones = [], zonesLoaded = false, activeZone = null;
 let renderedList = [];
 let refreshTimer = null;
 let locationRefreshTimer = null;
@@ -1632,6 +1670,104 @@ function applyMissionsAndRender(isStale, staleTs) {
   updateLastRefreshed(isStale, staleTs);
 }
 // ════════════════════════════════════════════════════════════════
+//  ZONE FILTER — I-240 team boundary polygons, added 2026-08-31
+//  --------------------------------------------------------------
+//  A single-select filter (same one-at-a-time pattern as the distance
+//  buffer row below), scoped to whichever polygons this token-secured
+//  layer actually has — currently 2, but built to handle however many
+//  exist without any code change (buildFilterGrid() generates one pill
+//  per zone found in `zones`, not a hardcoded list). Each polygon carries
+//  a `label` and `team` field per the user's description; the two are
+//  combined into one pill ("<team> – <label>") since a zone is really
+//  identified by both together, not either field alone.
+// ════════════════════════════════════════════════════════════════
+const ZONE_LAYER = {
+  url:           'https://services1.arcgis.com/kILp9lqGUeOhnDbI/arcgis/rest/services/I-240_Boundary/FeatureServer/0',
+  labelField:    'label',
+  teamField:     'team',
+  tokenRequired: true, // confirmed token-secured (same org as the PDA feature service) — could not introspect the exact field casing beyond what the user described, hence resolveField()'s case-insensitive lookup below
+};
+// Fetched once and cached in memory for the session — these are a
+// handful of static boundary polygons, not something that needs
+// re-fetching on the 5-min asset auto-refresh.
+async function fetchZones() {
+  try {
+    if (ZONE_LAYER.tokenRequired) await ensureFreshToken();
+    const params = new URLSearchParams({ where: '1=1', outFields: '*', outSR: '4326', f: 'geojson' });
+    if (ZONE_LAYER.tokenRequired) params.set('token', TOKEN.accessToken);
+    const fc = await arcgisFetch(`${ZONE_LAYER.url}/query?${params}`);
+    zones = (fc.features || []).map((feature, idx) => {
+      const props = feature.properties || {};
+      const label = resolveField(props, ZONE_LAYER.labelField);
+      const team  = resolveField(props, ZONE_LAYER.teamField);
+      const oid   = resolveField(props, 'OBJECTID');
+      return {
+        key:      (oid !== undefined && oid !== null) ? String(oid) : `${team}|${label}|${idx}`,
+        label:    (label !== undefined && label !== null) ? String(label) : '',
+        team:     (team  !== undefined && team  !== null) ? String(team)  : '',
+        geometry: feature.geometry,
+      };
+    }).filter(z => z.label || z.team); // skip any polygon missing both fields entirely — nothing sensible to show on its pill
+    zonesLoaded = true;
+    assignZonesToAssets();
+    buildFilterGrid(); // re-render so the zone row appears now that there's something to show
+  } catch (err) {
+    // Not fatal — the app still works, it just won't have this one
+    // filter available. Most likely cause: token/permission issue on
+    // this specific layer, distinct from the main PDA feature service.
+    console.warn('[Zones] could not load I-240 team boundaries:', err);
+  }
+}
+function zoneDisplayLabel(z) {
+  if (z.team && z.label) return `${z.team} – ${z.label}`;
+  return z.team || z.label || 'Zone';
+}
+// Point-in-polygon spatial join — ported as-is from the district-boundary
+// fork (Preds Summary), which unit-tested this against known square/hole/
+// multipolygon fixtures. Deliberately not a turf.js dependency, for the
+// same reason it wasn't there either: this is the one thing in the app
+// that would've needed a geometry library, and a small ray-casting
+// implementation is enough for it. Handles Polygon + MultiPolygon and
+// holes (a ring after the first subtracts from the outer ring).
+function rayCastRing(lat, lng, ring) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0], yi = ring[i][1];
+    const xj = ring[j][0], yj = ring[j][1];
+    const intersects = ((yi > lat) !== (yj > lat)) &&
+      (lng < (xj - xi) * (lat - yi) / (yj - yi) + xi);
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+function pointInPolygonRings(lat, lng, rings) {
+  if (!rings || !rings.length) return false;
+  if (!rayCastRing(lat, lng, rings[0])) return false; // outside the outer ring entirely
+  for (let i = 1; i < rings.length; i++) {
+    if (rayCastRing(lat, lng, rings[i])) return false; // inside a hole — excluded
+  }
+  return true;
+}
+function pointInGeoJsonGeometry(lat, lng, geometry) {
+  if (!geometry) return false;
+  if (geometry.type === 'Polygon') return pointInPolygonRings(lat, lng, geometry.coordinates);
+  if (geometry.type === 'MultiPolygon') return geometry.coordinates.some(poly => pointInPolygonRings(lat, lng, poly));
+  return false;
+}
+// First matching zone wins — the layer isn't expected to have overlapping
+// polygons (each team's area is its own boundary), but if it ever does,
+// this just means whichever zone happens to be listed first in the fetch
+// order is the one an overlapping point counts as.
+function findZoneForPoint(lat, lng) {
+  for (const z of zones) {
+    if (pointInGeoJsonGeometry(lat, lng, z.geometry)) return z.key;
+  }
+  return null;
+}
+function assignZonesToAssets() {
+  assets = assets.map(a => ({ ...a, zoneKey: findZoneForPoint(a.lat, a.lng) }));
+}
+// ════════════════════════════════════════════════════════════════
 //  FILTER GRID — 5 damage levels + "All", plus a distance buffer row
 // ════════════════════════════════════════════════════════════════
 const BUFFER_OPTIONS = [
@@ -1655,10 +1791,25 @@ function buildFilterGrid() {
   const bufferBtns = BUFFER_OPTIONS.map(o => `
     <button class="buft ${o.miles === null ? 'active' : ''}" data-miles="${o.miles === null ? '' : o.miles}"
       aria-pressed="${o.miles === null ? 'true' : 'false'}" onclick="setBuffer(this, ${o.miles === null ? 'null' : o.miles})">${o.label}</button>`).join('');
+  // Zone row only renders once the (fetched-once, async) I-240 layer has
+  // actually loaded and has at least one usable polygon — omitted
+  // entirely until then rather than showing an empty/loading row, since
+  // there's nothing meaningful to pick yet. fetchZones() calls
+  // buildFilterGrid() again the moment it resolves so this row appears
+  // as soon as it can, with no user action needed.
+  const zoneSection = zones.length ? (() => {
+    const zoneNoneBtn = `
+      <button class="zonet ${activeZone === null ? 'active' : ''}" data-zone="" aria-pressed="${activeZone === null ? 'true' : 'false'}" onclick="setZone(this, null)">All zones</button>`;
+    const zoneBtns = zones.map(z => `
+      <button class="zonet ${activeZone === z.key ? 'active' : ''}" data-zone="${escapeHtml(z.key)}" aria-pressed="${activeZone === z.key ? 'true' : 'false'}" onclick="setZone(this, '${escapeHtml(z.key)}')">${escapeHtml(zoneDisplayLabel(z))}</button>`).join('');
+    return `
+    <div class="buf-label">Team Zone</div>
+    <div class="buf-row" role="group" aria-label="Filter by team zone">${zoneNoneBtn}${zoneBtns}</div>`;
+  })() : '';
   document.getElementById('filter-grid').innerHTML = `
     <div class="fg-row" role="group" aria-label="Filter by damage level">${allBtn}${others}</div>
     <div class="buf-label">Distance from me</div>
-    <div class="buf-row" role="group" aria-label="Filter by distance from my location">${bufferBtns}</div>`;
+    <div class="buf-row" role="group" aria-label="Filter by distance from my location">${bufferBtns}</div>${zoneSection}`;
 }
 function toggleFilterDrawer(forceClose = false) {
   const drawer = document.getElementById('filter-drawer');
@@ -1720,12 +1871,33 @@ function clearBufferFilter() {
   updateActiveFilterBar();
   renderList();
 }
+function setZone(el, zoneKey) {
+  document.querySelectorAll('.zonet[data-zone]').forEach(c => { c.classList.remove('active'); c.setAttribute('aria-pressed', 'false'); });
+  el.classList.add('active'); el.setAttribute('aria-pressed', 'true');
+  activeZone = zoneKey;
+  updateActiveFilterBar();
+  renderList();
+  // Closes on selection, matching setFilter()/setBuffer() above.
+  toggleFilterDrawer(true);
+}
+function clearZoneFilter() {
+  document.querySelectorAll('.zonet[data-zone]').forEach(c => { c.classList.remove('active'); c.setAttribute('aria-pressed', 'false'); });
+  const noneBtn = document.querySelector('.zonet[data-zone=""]');
+  if (noneBtn) { noneBtn.classList.add('active'); noneBtn.setAttribute('aria-pressed', 'true'); }
+  activeZone = null;
+  updateActiveFilterBar();
+  renderList();
+}
 function updateActiveFilterBar() {
   const bar = document.getElementById('active-filters');
   const btn = document.getElementById('filter-toggle-btn');
   const chips = [];
   if (activeFilter !== 'all' && DAMAGE_LEVELS[activeFilter]) chips.push({ kind: 'level', label: DAMAGE_LEVELS[activeFilter].label });
   if (activeBuffer !== null) chips.push({ kind: 'buffer', label: `Within ${activeBuffer} mi` });
+  if (activeZone !== null) {
+    const z = zones.find(zz => zz.key === activeZone);
+    if (z) chips.push({ kind: 'zone', label: zoneDisplayLabel(z) });
+  }
   bar.innerHTML = chips.map(c =>
     `<button class="active-chip" type="button" data-clear="${c.kind}" aria-label="Remove filter: ${c.label}">${c.label}<span class="active-chip-x" aria-hidden="true">×</span></button>`
   ).join('');
@@ -1737,6 +1909,7 @@ function updateActiveFilterBar() {
       const kind = chip.getAttribute('data-clear');
       if (kind === 'level') clearTypeFilter();
       else if (kind === 'buffer') clearBufferFilter();
+      else if (kind === 'zone') clearZoneFilter();
     });
   }
   btn.classList.toggle('has-filter', chips.length > 0);
@@ -1746,6 +1919,7 @@ function getFiltered() {
   let list = scopedAssets().filter(a => {
     if (activeFilter !== 'all' && a.level !== activeFilter) return false;
     if (activeBuffer !== null && (a.distance === null || a.distance > activeBuffer)) return false;
+    if (activeZone !== null && a.zoneKey !== activeZone) return false;
     if (searchTerm) {
       const h = `${a.address} ${a.suiteApt} ${a.city} ${a.county} ${a.region} ${a.dwellingType} ${a.incidentType} ${a.zip}`.toLowerCase();
       if (!h.includes(searchTerm)) return false;
@@ -2504,12 +2678,16 @@ function selectAsset(id) {
 // permission was declined, or a car is passing through a dead zone. A
 // manual tap (the "Locate" pill, or recenterOnUser()'s own fallback) is
 // never silent, so the user still gets normal feedback for something they
-// explicitly asked for.
+// explicitly asked for. A silent refresh also tells onLocationSuccess() not
+// to recenter/zoom the map (see that function's own comment) — otherwise
+// every 30s auto-refresh would yank the view away from whatever the user
+// was actually looking at (a feature they'd zoomed into, a different part
+// of the mission, etc).
 function requestLocation(opts = {}) {
   const silent = !!opts.silent;
   if (!navigator.geolocation) { if (!silent) useLastKnownLocation(); return; }
   if (!silent) document.getElementById('loc-label').textContent = '…';
-  navigator.geolocation.getCurrentPosition(onLocationSuccess, () => {
+  navigator.geolocation.getCurrentPosition((pos) => onLocationSuccess(pos, { recenter: !silent }), () => {
     // No fresh fix — airplane mode, GPS still resolving indoors, or the
     // user declined the permission prompt. Rather than dropping location/
     // distance entirely, fall back to wherever we last had a fix (see
@@ -2528,7 +2706,15 @@ function recenterOnUser() {
   if (userLat === null || userLng === null) { requestLocation(); return; }
   map.flyTo([userLat, userLng], Math.max(map.getZoom(), 12), { duration: 0.8 });
 }
-function onLocationSuccess(pos) {
+// `opts.recenter` (default true) controls whether a fresh fix also flies/
+// zooms the map to the user's position — set to false by the periodic
+// auto-refresh (see requestLocation() above) so an automatic background
+// update can move the on-map dot and recalculate distances without
+// yanking the view away from a feature the user has zoomed into. A manual
+// "Locate" tap, and the very first fix on page load, both still recenter
+// as before (neither passes `opts`, so this defaults to true for them).
+function onLocationSuccess(pos, opts = {}) {
+  const recenter = opts.recenter !== false;
   userLat = pos.coords.latitude; userLng = pos.coords.longitude;
   userLocationStale = false;
   cacheLocation(userLat, userLng);
@@ -2552,7 +2738,7 @@ function onLocationSuccess(pos) {
       icon: L.divIcon({ className: '', html: '<div class="user-dot"></div>', iconSize: [16, 16], iconAnchor: [8, 8] }),
       zIndexOffset: 1000,
     }).addTo(map);
-    map.flyTo([userLat, userLng], 10, { duration: 1 });
+    if (recenter) map.flyTo([userLat, userLng], 10, { duration: 1 });
   } catch (err) {
     console.warn('Could not place/fly to the user-location marker (list distances were still updated):', err);
   }
@@ -2836,6 +3022,12 @@ async function startApp() {
   // Discover layer capabilities (hasAttachments, etc.) — runs in parallel
   // with everything else; the result is consulted when a detail is opened.
   fetchLayerMeta();
+  // Same fire-and-forget shape as fetchLayerMeta() above — the I-240 zone
+  // layer is a separate token-secured service, so this can succeed or
+  // fail independently of the main assessment fetch. assignZonesToAssets()
+  // back-fills zoneKey onto whatever fetchAssets() already loaded once
+  // this resolves (see fetchZones() for why it can't just run first).
+  fetchZones();
   if (navigator.geolocation) navigator.geolocation.getCurrentPosition(onLocationSuccess, () => useLastKnownLocation(), { timeout: 5000 });
   else useLastKnownLocation();
   if (CONFIG.refreshInterval > 0) {
