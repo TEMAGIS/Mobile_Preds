@@ -598,18 +598,34 @@
         </div>
       </div>
       <div class="active-filters" id="active-filters" aria-label="Active filters" aria-live="polite"></div>
-      <div id="filter-drawer" aria-hidden="true" inert>
-        <div class="filter-drawer-header">
-          <div class="filter-drawer-title">Filters</div>
-          <button type="button" class="filter-drawer-close" onclick="toggleFilterDrawer(true)" aria-label="Close filters">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg>
-          </button>
-        </div>
-        <nav id="filter-grid" aria-label="Filter assessments by damage level and distance"></nav>
-      </div>
     </div>
     <div id="asset-list" role="list" aria-label="Assessment results"></div>
   </main>
+</div>
+<!-- ════════════════════════════════════════════════════════════
+     FILTER DRAWER (full-screen sheet)
+     --------------------------------------------------------------
+     Moved out to a direct sibling of #app (2026-08-31) — same
+     placement as #detail-sheet/#login-screen/#mission-screen/
+     #lightbox below, all of which are full-screen takeovers. It used
+     to sit nested inside #list-section > .list-controls (a `position:
+     sticky` element, itself inside #app's CSS Grid on desktop widths),
+     and despite `position: fixed; inset: 0`, that nesting was pinning
+     it to the list column instead of the full viewport once the
+     desktop two-column layout kicked in — moving it here, matching the
+     one structural pattern already proven to work for every other
+     full-screen overlay in this file, is the actual fix (this was a
+     genuine layout bug, not a caching issue).
+     ════════════════════════════════════════════════════════════
+-->
+<div id="filter-drawer" aria-hidden="true" inert>
+  <div class="filter-drawer-header">
+    <div class="filter-drawer-title">Filters</div>
+    <button type="button" class="filter-drawer-close" onclick="toggleFilterDrawer(true)" aria-label="Close filters">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg>
+    </button>
+  </div>
+  <nav id="filter-grid" aria-label="Filter assessments by damage level and distance"></nav>
 </div>
 <!-- ════════════════════════════════════════════════════════════
      DETAIL SHEET
