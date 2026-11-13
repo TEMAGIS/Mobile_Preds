@@ -860,7 +860,11 @@ async function _sha256base64url(s) {
 // ── Token cache helpers ──────────────────────────────────────────
 function loadStoredToken() {
   try {
-    const raw = localStorage.getItem(CONFIG.tokenKey);
+    // Sign-in tokens live in per-tab sessionStorage: every TEMAGIS app shares the
+    // temagis.github.io origin, so localStorage would expose them to all of them.
+    // Delete any token an older version of this app left in localStorage.
+    try { window.localStorage.removeItem(CONFIG.tokenKey); } catch { /* storage unavailable */ }
+    const raw = sessionStorage.getItem(CONFIG.tokenKey);
     if (!raw) return null;
     const t = JSON.parse(raw);
     if (!t.accessToken || !t.expiresAt) return null;
@@ -869,11 +873,11 @@ function loadStoredToken() {
 }
 function saveToken(t) {
   TOKEN = t;
-  localStorage.setItem(CONFIG.tokenKey, JSON.stringify(t));
+  sessionStorage.setItem(CONFIG.tokenKey, JSON.stringify(t));
 }
 function clearStoredToken() {
   TOKEN = null;
-  localStorage.removeItem(CONFIG.tokenKey);
+  sessionStorage.removeItem(CONFIG.tokenKey);
   // Clear PKCE breadcrumbs too so a half-finished flow doesn't haunt us
   sessionStorage.removeItem('oauth_verifier');
   sessionStorage.removeItem('oauth_state');
