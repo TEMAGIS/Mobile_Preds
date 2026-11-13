@@ -2016,39 +2016,94 @@ function downloadFilteredCsv() {
   const list = getFiltered();
   if (!list.length) { alert('No assessments match the current filters — adjust or clear a filter, then try again.'); return; }
   const csv = buildCsv(list);
+  const filename = csvFilename();
+  if (isEmbeddedInIframe()) {
+    // Embedded (e.g. ArcGIS Experience Builder's Embed widget): the
+    // iframe is sandboxed WITHOUT 'allow-downloads', so an <a download>
+    // click here is silently dropped by the browser — no error, nothing.
+    //
+    // Opening the blob: URL in a new tab doesn't work either: text/csv
+    // isn't renderable, so the new tab turns it back into a download,
+    // which is blocked again if the tab inherited the iframe's sandbox;
+    // and if it didn't, Chrome's blob-URL partitioning refuses to load a
+    // blob minted inside a third-party iframe in a top-level tab.
+    //
+    // Instead: open a same-origin about:blank popup (allowed — the same
+    // trick the OAuth sign-in uses) and create the Blob + download link
+    // inside the popup's own top-level document. The CSV is also shown
+    // in a text box with a Copy button, so even if the download is still
+    // blocked the user can get the data out.
+    exportCsvViaPopup(csv, filename);
+    return;
+  }
   // Leading BOM so Excel opens the UTF-8 file with accented characters
   // intact instead of misreading them as the system codepage.
-  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
-  if (isEmbeddedInIframe()) {
-    // Chrome (and others) silently block an <a download> click's actual
-    // file-save step when it originates from a sandboxed iframe lacking
-    // the 'allow-downloads' flag — which is exactly how most page
-    // builders, including ArcGIS Experience Builder's Embed widget,
-    // configure an embedded app by default. There's no JS-visible error
-    // for this, the click just does nothing. Opening the CSV in a new
-    // tab instead is a navigation, not a download, so it only needs
-    // 'allow-popups' — already set on effectively every embed widget,
-    // since those need outbound links to open in a new tab too. The
-    // browser either downloads it automatically from there or shows the
-    // raw CSV text, which the user can still save via the browser's own
-    // Save Page As / Ctrl+S — either way, something reaches them instead
-    // of a silent no-op.
-    const win = window.open(url, '_blank');
-    if (!win) {
-      alert('Your browser blocked the download popup. Please allow popups for this site, or open this app directly in its own browser tab instead of the embedded view, then try again.');
-    }
-    // Held longer than the direct-download path below — the new tab
-    // needs time to actually load the blob URL before it's revoked.
-    setTimeout(() => URL.revokeObjectURL(url), 60000);
-  } else {
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = csvFilename();
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+// Must be called synchronously from the click handler so window.open
+// still has user activation.
+function exportCsvViaPopup(csv, filename) {
+  const w = 720, h = 560;
+  const left = Math.max(0, (screen.width  - w) / 2);
+  const top  = Math.max(0, (screen.height - h) / 2);
+  const popup = window.open('about:blank', '_blank',
+    `width=${w},height=${h},left=${left},top=${top},scrollbars=1,resizable=1`);
+  if (!popup) {
+    alert('Your browser blocked the export window. Please allow popups for this site, or open this app in its own browser tab instead of the embedded view, then try again.');
+    return;
+  }
+  try {
+    const d = popup.document;
+    d.open();
+    d.write(
+      '<!doctype html><html><head><meta charset="utf-8"><title>CSV export</title>' +
+      '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+      '<style>body{font-family:system-ui,sans-serif;margin:0;padding:16px;background:#f0f2f5;color:#222;display:flex;flex-direction:column;gap:10px;height:100vh;box-sizing:border-box}' +
+      'h1{font-size:16px;margin:0}p{font-size:13px;margin:0;color:#555}' +
+      '.row{display:flex;gap:8px;flex-wrap:wrap}' +
+      'a,button{font:600 14px system-ui,sans-serif;padding:10px 16px;border-radius:8px;border:0;cursor:pointer;text-decoration:none}' +
+      'a{background:#002868;color:#fff}button{background:#fff;color:#002868;border:1px solid #002868}' +
+      'textarea{flex:1;width:100%;box-sizing:border-box;font:12px ui-monospace,Consolas,monospace;white-space:pre;resize:none}</style>' +
+      '</head><body><h1 id="t"></h1>' +
+      '<p>Your download should start automatically. If it doesn’t, click <b>Download CSV</b>, or use <b>Copy</b> and paste into Excel.</p>' +
+      '<div class="row"><a id="dl" href="#">Download CSV</a><button id="cp" type="button">Copy to clipboard</button></div>' +
+      '<textarea id="ta" readonly></textarea></body></html>'
+    );
+    d.close();
+    d.getElementById('t').textContent = filename;
+    const ta = d.getElementById('ta');
+    ta.value = csv;
+    // Blob + object URL created with the POPUP's constructors so the URL
+    // belongs to the popup's (top-level) context, not the sandboxed iframe.
+    const blob = new popup.Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = popup.URL.createObjectURL(blob);
+    const dl = d.getElementById('dl');
+    dl.href = url;
+    dl.download = filename;
+    const cp = d.getElementById('cp');
+    cp.addEventListener('click', () => {
+      const done = () => { cp.textContent = 'Copied!'; };
+      ta.focus(); ta.select();
+      if (popup.navigator.clipboard && popup.navigator.clipboard.writeText) {
+        popup.navigator.clipboard.writeText(csv).then(done, () => { try { d.execCommand('copy'); done(); } catch {} });
+      } else {
+        try { d.execCommand('copy'); done(); } catch {}
+      }
+    });
+    // Try the download automatically; the visible button is the fallback.
+    dl.click();
+  } catch (err) {
+    console.error('CSV export popup failed:', err);
+    try { popup.close(); } catch {}
+    alert('Could not open the export window. Please open this app in its own browser tab and try again.');
   }
 }
 // Keeps the drawer's download button in sync with the current result
