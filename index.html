@@ -2033,7 +2033,16 @@ function downloadFilteredCsv() {
     // inside the popup's own top-level document. The CSV is also shown
     // in a text box with a Copy button, so even if the download is still
     // blocked the user can get the data out.
-    exportCsvViaPopup(csv, filename);
+    //
+    // UPDATE: ExB's Embed widget does NOT set allow-popups-to-escape-
+    // sandbox, so that popup inherits the same no-downloads sandbox and
+    // the download is still blocked (Esri treats this as by-design for
+    // any embedded URL outside arcgis.com / esri.com). So the primary
+    // path when embedded is now an in-app export panel whose Copy button
+    // puts tab-separated rows on the clipboard — pastes straight into
+    // Excel columns, no download needed. The popup download is kept as
+    // a secondary button for hosts that do allow it.
+    showEmbeddedExportPanel(list, csv, filename);
     return;
   }
   // Leading BOM so Excel opens the UTF-8 file with accented characters
@@ -2047,6 +2056,75 @@ function downloadFilteredCsv() {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+// Tab-separated version of the same columns, for the clipboard: Excel
+// splits pasted TSV into columns (pasted CSV would land in column A).
+function buildTsv(list) {
+  const clean = v => (v == null ? '' : String(v)).replace(/[\t\r\n]+/g, ' ');
+  const rows = [CSV_COLUMNS.map(c => clean(c.header)).join('\t')];
+  list.forEach(a => rows.push(CSV_COLUMNS.map(c => clean(c.get(a))).join('\t')));
+  return rows.join('\r\n');
+}
+// Copies text inside a sandboxed cross-origin iframe. The async
+// Clipboard API usually needs allow="clipboard-write" on the iframe
+// (which ExB doesn't set), so fall back to execCommand('copy') on a
+// selected textarea, which only needs the user's click.
+function copyTextFallback(text, textarea) {
+  const viaExec = () => {
+    textarea.value = text;
+    textarea.focus();
+    textarea.select();
+    textarea.setSelectionRange(0, text.length);
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch { ok = false; }
+    return ok ? Promise.resolve() : Promise.reject(new Error('copy blocked'));
+  };
+  // execCommand first: it must run synchronously inside the click, and
+  // it's the path that works in ExB. Clipboard API only as a fallback.
+  return viaExec().catch(() =>
+    (navigator.clipboard && navigator.clipboard.writeText)
+      ? navigator.clipboard.writeText(text)
+      : Promise.reject(new Error('copy blocked')));
+}
+function showEmbeddedExportPanel(list, csv, filename) {
+  document.getElementById('embed-export-panel')?.remove();
+  const tsv = buildTsv(list);
+  const wrap = document.createElement('div');
+  wrap.id = 'embed-export-panel';
+  wrap.setAttribute('role', 'dialog');
+  wrap.setAttribute('aria-modal', 'true');
+  wrap.setAttribute('aria-label', 'Export assessments');
+  wrap.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:16px';
+  wrap.innerHTML =
+    '<div style="background:#fff;color:#222;border-radius:12px;max-width:560px;width:100%;max-height:90vh;display:flex;flex-direction:column;gap:10px;padding:18px;box-shadow:0 10px 30px rgba(0,0,0,.3);font-family:\'DM Sans\',system-ui,sans-serif">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><strong style="font-size:16px">Export ' + list.length + ' assessment' + (list.length === 1 ? '' : 's') + '</strong>' +
+      '<button type="button" data-act="close" aria-label="Close" style="border:0;background:none;font-size:22px;line-height:1;cursor:pointer;color:#555">&times;</button></div>' +
+      '<p style="margin:0;font-size:13px;color:#444;line-height:1.45">File downloads are blocked while this app is embedded in this page. Click <b>Copy to clipboard</b>, then paste into a blank Excel sheet (Ctrl+V) — the columns line up automatically.</p>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+        '<button type="button" data-act="copy" style="font:600 14px inherit;padding:10px 16px;border-radius:8px;border:0;background:#002868;color:#fff;cursor:pointer">Copy to clipboard</button>' +
+        '<button type="button" data-act="popup" style="font:600 14px inherit;padding:10px 16px;border-radius:8px;border:1px solid #002868;background:#fff;color:#002868;cursor:pointer">Try download in new window</button>' +
+      '</div>' +
+      '<div data-role="status" aria-live="polite" style="font-size:13px;font-weight:600;min-height:1em"></div>' +
+      '<textarea readonly aria-label="Export data" style="width:100%;box-sizing:border-box;height:180px;font:12px ui-monospace,Consolas,monospace;white-space:pre;overflow:auto"></textarea>' +
+    '</div>';
+  document.body.appendChild(wrap);
+  const ta = wrap.querySelector('textarea');
+  const status = wrap.querySelector('[data-role="status"]');
+  ta.value = tsv;
+  const close = () => { wrap.remove(); document.removeEventListener('keydown', onKey); };
+  const onKey = e => { if (e.key === 'Escape') close(); };
+  document.addEventListener('keydown', onKey);
+  wrap.addEventListener('click', e => {
+    if (e.target === wrap) return close();
+    const act = e.target.closest('[data-act]')?.dataset.act;
+    if (act === 'close') close();
+    else if (act === 'copy') {
+      copyTextFallback(tsv, ta).then(
+        () => { status.style.color = '#1a7f37'; status.textContent = 'Copied ' + list.length + ' rows — paste into Excel with Ctrl+V.'; },
+        () => { status.style.color = '#b42318'; status.textContent = 'Couldn’t copy automatically. Click in the box below, press Ctrl+A then Ctrl+C.'; ta.focus(); ta.select(); });
+    } else if (act === 'popup') exportCsvViaPopup(csv, filename);
+  });
+  wrap.querySelector('[data-act="copy"]').focus();
 }
 // Must be called synchronously from the click handler so window.open
 // still has user activation.
